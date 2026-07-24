@@ -1,41 +1,41 @@
 export const Colors = {
   light: {
-    background: "#FAFAFA",
+    background: "#F4F7FB",
     surface: "#FFFFFF",
 
-    primary: "#2563EB",
-    secondary: "#6366F1",
+    primary: "#3B5BDB",
+    primaryHover: "#2F4FC7",
+    accent: "#14B8A6",
 
-    text: "#111827",
-    textSecondary: "#6B7280",
+    text: "#182230",
+    textMuted: "#667085",
 
-    border: "#E5E7EB",
+    border: "#D9E2EC",
 
-    success: "#16A34A",
-    warning: "#F59E0B",
-    error: "#DC2626",
-
-    internalCitation: "#2563EB",
-    externalCitation: "#10B981",
+    citation: {
+      bg: "#EFF4FF",
+      border: "#C7D7FE",
+      text: "#2F4FC7",
+    },
   },
 
   dark: {
-    background: "#09090B",
-    surface: "#18181B",
+    background: "#0B1220",
+    surface: "#131D2F",
 
-    primary: "#3B82F6",
-    secondary: "#818CF8",
+    primary: "#5B8CFF",
+    primaryHover: "#7AA3FF",
+    accent: "#2DD4BF",
 
     text: "#F8FAFC",
-    textSecondary: "#94A3B8",
+    textMuted: "#A8B3C7",
 
-    border: "#27272A",
+    border: "#22314B",
 
-    success: "#22C55E",
-    warning: "#FBBF24",
-    error: "#EF4444",
-
-    internalCitation: "#60A5FA",
-    externalCitation: "#34D399",
+    citation: {
+      bg: "rgba(91,140,255,.15)",
+      border: "rgba(122,163,255,.3)",
+      text: "#93C5FD",
+    },
   },
-};
+}
