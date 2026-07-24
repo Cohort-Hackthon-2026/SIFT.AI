@@ -9,6 +9,7 @@ export const Colors = {
 
     text: "#182230",
     textMuted: "#667085",
+    textInverse: "#FFFFFF",
 
     border: "#D9E2EC",
 
@@ -29,6 +30,7 @@ export const Colors = {
 
     text: "#F8FAFC",
     textMuted: "#A8B3C7",
+    textInverse: "#081120",
 
     border: "#22314B",
 
