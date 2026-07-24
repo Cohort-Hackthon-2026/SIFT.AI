@@ -17,4 +17,4 @@ RUN python -m pip install --upgrade pip \
 
 EXPOSE 8000
 
-CMD ["fastapi", "dev", "app/main.py", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["fastapi", "dev", "--entrypoint", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

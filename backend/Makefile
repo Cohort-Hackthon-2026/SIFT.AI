@@ -27,7 +27,7 @@ install:
 	$(PIP) install -e ".[dev]"
 
 dev:
-	$(VENV)/bin/fastapi dev app/main.py
+	$(VENV)/bin/fastapi dev --entrypoint app.main:app
 
 test:
 	$(PYTHON) -m pytest
