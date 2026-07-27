@@ -1,6 +1,6 @@
 import { useEffect } from "react";
 import { BrowserRouter, Routes, Route } from "react-router-dom";
-import { useTheme } from "../store/Theme";
+import { useTheme } from "../store/theme";
 
 import Chat from "./Pages/Chat";
 import NotFound from "./Pages/NotFound";
