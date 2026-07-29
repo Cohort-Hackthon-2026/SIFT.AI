@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 
 class VectorStoreProtocol(Protocol):
@@ -77,17 +78,41 @@ class AhnlichVectorStoreService:
     """Ahnlich-backed vector store implementation."""
 
     _endpoint: str | None = None
+    _host: str | None = None
+    _port: int = 1370
     _api_key: str | None = None
     _store_name: str | None = None
     _fallback: VectorStoreService = field(default_factory=VectorStoreService)
 
     def __post_init__(self) -> None:
         self._endpoint = self._endpoint or os.getenv("AHNLICH_ENDPOINT")
+        self._host = self._host or os.getenv("AHNLICH_HOST") or self._resolved_host_from_endpoint()
+        self._port = int(os.getenv("AHNLICH_PORT", str(self._port)))
         self._api_key = self._api_key or os.getenv("AHNLICH_API_KEY")
         self._store_name = self._store_name or os.getenv("AHNLICH_STORE_NAME", "sift_ai_store")
 
-    async def initialize(self) -> None:
+    def _resolved_host_from_endpoint(self) -> str:
         if not self._endpoint:
+            return "127.0.0.1"
+
+        parsed = urlparse(self._endpoint)
+        if parsed.hostname:
+            return parsed.hostname
+        return "127.0.0.1"
+
+    def _connection_settings(self) -> tuple[str, int]:
+        if self._endpoint:
+            parsed = urlparse(self._endpoint)
+            if parsed.hostname:
+                return parsed.hostname, parsed.port or self._port
+
+        return self._host or "127.0.0.1", self._port
+
+    def _has_connection_target(self) -> bool:
+        return bool(self._endpoint or self._host or os.getenv("AHNLICH_HOST"))
+
+    async def initialize(self) -> None:
+        if not self._has_connection_target():
             await self._fallback.initialize()
             return
 
@@ -100,7 +125,8 @@ class AhnlichVectorStoreService:
             await self._fallback.initialize()
             return
 
-        async with Channel(host=self._endpoint, port=1370) as channel:
+        host, port = self._connection_settings()
+        async with Channel(host=host, port=port) as channel:
             client = AiServiceStub(channel)
             response = await client.list_stores(ai_query.ListStores())
             if self._store_name not in {store.name for store in response.stores}:
@@ -119,7 +145,7 @@ class AhnlichVectorStoreService:
         if len(chunks) != len(metadata):
             raise ValueError("chunks and metadata must be the same length")
 
-        if not self._endpoint:
+        if not self._has_connection_target():
             await self._fallback.upsert_chunks(chunks, metadata)
             return
 
@@ -133,7 +159,8 @@ class AhnlichVectorStoreService:
             await self._fallback.upsert_chunks(chunks, metadata)
             return
 
-        async with Channel(host=self._endpoint, port=1370) as channel:
+        host, port = self._connection_settings()
+        async with Channel(host=host, port=port) as channel:
             client = AiServiceStub(channel)
             inputs = []
             for chunk_text, item_metadata in zip(chunks, metadata, strict=True):
@@ -153,7 +180,7 @@ class AhnlichVectorStoreService:
             )
 
     async def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        if not self._endpoint:
+        if not self._has_connection_target():
             return await self._fallback.search(query=query, top_k=top_k)
 
         try:
@@ -166,7 +193,8 @@ class AhnlichVectorStoreService:
         except ImportError:
             return await self._fallback.search(query=query, top_k=top_k)
 
-        async with Channel(host=self._endpoint, port=1370) as channel:
+        host, port = self._connection_settings()
+        async with Channel(host=host, port=port) as channel:
             client = AiServiceStub(channel)
             response = await client.get_sim_n(
                 ai_query.GetSimN(
@@ -190,7 +218,7 @@ class AhnlichVectorStoreService:
         return results
 
     async def delete_document(self, document_id: str) -> None:
-        if not self._endpoint:
+        if not self._has_connection_target():
             await self._fallback.delete_document(document_id)
             return
 
@@ -212,7 +240,8 @@ class AhnlichVectorStoreService:
             )
         )
 
-        async with Channel(host=self._endpoint, port=1370) as channel:
+        host, port = self._connection_settings()
+        async with Channel(host=host, port=port) as channel:
             client = AiServiceStub(channel)
             response = await client.get_pred(
                 ai_query.GetPred(

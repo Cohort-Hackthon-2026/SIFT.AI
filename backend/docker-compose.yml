@@ -4,6 +4,19 @@ services:
       context: .
     ports:
       - "8000:8000"
+    environment:
+      AHNLICH_HOST: ahnlich
+      AHNLICH_PORT: 1370
+      USE_AHNLICH: "true"
     volumes:
       - .:/app
     command: fastapi dev --entrypoint app.main:app --host 0.0.0.0 --port 8000
+    depends_on:
+      - ahnlich
+
+  ahnlich:
+    image: ghcr.io/deven96/ahnlich-ai:latest
+    ports:
+      - "1370:1370"
+    environment:
+      AHNLICH_HOST: 0.0.0.0

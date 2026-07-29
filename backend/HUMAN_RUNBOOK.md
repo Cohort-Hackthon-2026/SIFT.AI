@@ -16,10 +16,18 @@ cd backend
 docker compose up --build
 ```
 
-This starts the API container and exposes it at:
+This starts both the API container and the Ahnlich container and exposes it at:
 
 - http://localhost:8000
 - http://localhost:8000/docs
+- http://localhost:1370
+
+If you want the backend to use an external Ahnlich service instead, set these environment variables before starting the stack:
+
+```bash
+export AHNLICH_HOST=your-host
+export AHNLICH_PORT=1370
+```
 
 ## 3. Run it in the background
 
