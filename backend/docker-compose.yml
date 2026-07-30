@@ -24,7 +24,18 @@ services:
   ahnlich:
     image: ghcr.io/deven96/ahnlich-ai:latest
     entrypoint: ["ahnlich-ai"]
-    command: ["run", "--host", "0.0.0.0", "--port", "1370", "--db-host", "ahnlich_db", "--db-port", "1369"]
+    command:
+      [
+        "run",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "1370",
+        "--db-host",
+        "ahnlich_db",
+        "--db-port",
+        "1369",
+      ]
     ports:
       - "1370:1370"
     depends_on:
