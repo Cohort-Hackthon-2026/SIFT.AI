@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass, field
 from typing import Any, Protocol
+from urllib.parse import urlparse
 
 
 class VectorStoreProtocol(Protocol):
@@ -77,19 +78,55 @@ class AhnlichVectorStoreService:
     """Ahnlich-backed vector store implementation."""
 
     _endpoint: str | None = None
+    _host: str | None = None
+    _port: int = 1370
     _api_key: str | None = None
     _store_name: str | None = None
     _fallback: VectorStoreService = field(default_factory=VectorStoreService)
+    _last_error: str | None = None
 
     def __post_init__(self) -> None:
         self._endpoint = self._endpoint or os.getenv("AHNLICH_ENDPOINT")
+        self._host = self._host or os.getenv("AHNLICH_HOST") or self._resolved_host_from_endpoint()
+        self._port = int(os.getenv("AHNLICH_PORT", str(self._port)))
         self._api_key = self._api_key or os.getenv("AHNLICH_API_KEY")
         self._store_name = self._store_name or os.getenv("AHNLICH_STORE_NAME", "sift_ai_store")
 
-    async def initialize(self) -> None:
+    def _resolved_host_from_endpoint(self) -> str:
         if not self._endpoint:
+            return "127.0.0.1"
+
+        parsed = urlparse(self._endpoint)
+        if parsed.hostname:
+            return parsed.hostname
+        return "127.0.0.1"
+
+    def _connection_settings(self) -> tuple[str, int]:
+        if self._endpoint:
+            parsed = urlparse(self._endpoint)
+            if parsed.hostname:
+                return parsed.hostname, parsed.port or self._port
+
+        return self._host or "127.0.0.1", self._port
+
+    def _has_connection_target(self) -> bool:
+        return bool(self._endpoint or self._host or os.getenv("AHNLICH_HOST"))
+
+    def _set_last_error(self, error: Exception | None) -> None:
+        if error is None:
+            self._last_error = None
+            return
+        self._last_error = f"{type(error).__name__}: {error}"
+
+    def _clear_last_error(self) -> None:
+        self._last_error = None
+
+    async def initialize(self) -> None:
+        if not self._has_connection_target():
             await self._fallback.initialize()
             return
+
+        self._clear_last_error()
 
         try:
             from grpclib.client import Channel
@@ -100,26 +137,33 @@ class AhnlichVectorStoreService:
             await self._fallback.initialize()
             return
 
-        async with Channel(host=self._endpoint, port=1370) as channel:
-            client = AiServiceStub(channel)
-            response = await client.list_stores(ai_query.ListStores())
-            if self._store_name not in {store.name for store in response.stores}:
-                await client.create_store(
-                    ai_query.CreateStore(
-                        store=self._store_name,
-                        index_model=AiModel.ALL_MINI_LM_L6_V2,
-                        query_model=AiModel.ALL_MINI_LM_L6_V2,
-                        predicates=["document_id", "user_id", "page_number"],
-                        error_if_exists=False,
-                        store_original=True,
+        host, port = self._connection_settings()
+        self._clear_last_error()
+        try:
+            async with Channel(host=host, port=port) as channel:
+                client = AiServiceStub(channel)
+                response = await client.list_stores(ai_query.ListStores())
+                if self._store_name not in {store.name for store in response.stores}:
+                    await client.create_store(
+                        ai_query.CreateStore(
+                            store=self._store_name,
+                            index_model=AiModel.ALL_MINI_LM_L6_V2,
+                            query_model=AiModel.ALL_MINI_LM_L6_V2,
+                            predicates=["document_id", "user_id", "page_number"],
+                            error_if_exists=False,
+                            store_original=True,
+                        )
                     )
-                )
+        except Exception as exc:
+            self._set_last_error(exc)
+            await self._fallback.initialize()
+            return
 
     async def upsert_chunks(self, chunks: list[str], metadata: list[dict[str, Any]]) -> None:
         if len(chunks) != len(metadata):
             raise ValueError("chunks and metadata must be the same length")
 
-        if not self._endpoint:
+        if not self._has_connection_target():
             await self._fallback.upsert_chunks(chunks, metadata)
             return
 
@@ -133,27 +177,34 @@ class AhnlichVectorStoreService:
             await self._fallback.upsert_chunks(chunks, metadata)
             return
 
-        async with Channel(host=self._endpoint, port=1370) as channel:
-            client = AiServiceStub(channel)
-            inputs = []
-            for chunk_text, item_metadata in zip(chunks, metadata, strict=True):
-                metadata_value = {key: metadata_module.MetadataValue(raw_string=str(value)) for key, value in item_metadata.items()}
-                inputs.append(
-                    keyval.AiStoreEntry(
-                        key=keyval.StoreInput(raw_string=chunk_text),
-                        value=keyval.StoreValue(value=metadata_value),
+        host, port = self._connection_settings()
+        self._clear_last_error()
+        try:
+            async with Channel(host=host, port=port) as channel:
+                client = AiServiceStub(channel)
+                inputs = []
+                for chunk_text, item_metadata in zip(chunks, metadata, strict=True):
+                    metadata_value = {key: metadata_module.MetadataValue(raw_string=str(value)) for key, value in item_metadata.items()}
+                    inputs.append(
+                        keyval.AiStoreEntry(
+                            key=keyval.StoreInput(raw_string=chunk_text),
+                            value=keyval.StoreValue(value=metadata_value),
+                        )
+                    )
+                await client.set(
+                    ai_query.Set(
+                        store=self._store_name,
+                        inputs=inputs,
+                        preprocess_action=PreprocessAction.NoPreprocessing,
                     )
                 )
-            await client.set(
-                ai_query.Set(
-                    store=self._store_name,
-                    inputs=inputs,
-                    preprocess_action=PreprocessAction.NoPreprocessing,
-                )
-            )
+        except Exception as exc:
+            self._set_last_error(exc)
+            await self._fallback.upsert_chunks(chunks, metadata)
+            return
 
     async def search(self, query: str, top_k: int = 5) -> list[dict[str, Any]]:
-        if not self._endpoint:
+        if not self._has_connection_target():
             return await self._fallback.search(query=query, top_k=top_k)
 
         try:
@@ -166,17 +217,23 @@ class AhnlichVectorStoreService:
         except ImportError:
             return await self._fallback.search(query=query, top_k=top_k)
 
-        async with Channel(host=self._endpoint, port=1370) as channel:
-            client = AiServiceStub(channel)
-            response = await client.get_sim_n(
-                ai_query.GetSimN(
-                    store=self._store_name,
-                    search_input=keyval.StoreInput(raw_string=query),
-                    closest_n=top_k,
-                    algorithm=Algorithm.CosineSimilarity,
-                    preprocess_action=PreprocessAction.NoPreprocessing,
+        host, port = self._connection_settings()
+        self._clear_last_error()
+        try:
+            async with Channel(host=host, port=port) as channel:
+                client = AiServiceStub(channel)
+                response = await client.get_sim_n(
+                    ai_query.GetSimN(
+                        store=self._store_name,
+                        search_input=keyval.StoreInput(raw_string=query),
+                        closest_n=top_k,
+                        algorithm=Algorithm.CosineSimilarity,
+                        preprocess_action=PreprocessAction.NoPreprocessing,
+                    )
                 )
-            )
+        except Exception as exc:
+            self._set_last_error(exc)
+            return await self._fallback.search(query=query, top_k=top_k)
 
         results = []
         for entry in response.entries:
@@ -190,7 +247,7 @@ class AhnlichVectorStoreService:
         return results
 
     async def delete_document(self, document_id: str) -> None:
-        if not self._endpoint:
+        if not self._has_connection_target():
             await self._fallback.delete_document(document_id)
             return
 
@@ -212,16 +269,21 @@ class AhnlichVectorStoreService:
             )
         )
 
-        async with Channel(host=self._endpoint, port=1370) as channel:
-            client = AiServiceStub(channel)
-            response = await client.get_pred(
-                ai_query.GetPred(
-                    store=self._store_name,
-                    condition=condition,
+        host, port = self._connection_settings()
+        try:
+            async with Channel(host=host, port=port) as channel:
+                client = AiServiceStub(channel)
+                response = await client.get_pred(
+                    ai_query.GetPred(
+                        store=self._store_name,
+                        condition=condition,
+                    )
                 )
-            )
-            for entry in response.entries:
-                await client.del_key(ai_query.DelKey(store=self._store_name, keys=[entry.key]))
+                for entry in response.entries:
+                    await client.del_key(ai_query.DelKey(store=self._store_name, keys=[entry.key]))
+        except Exception:
+            await self._fallback.delete_document(document_id)
+            return
 
 
 def create_vector_store_service() -> VectorStoreProtocol:

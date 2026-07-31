@@ -66,6 +66,9 @@ class StrictSearchResult(BaseModel):
 
 class StrictSearchResponse(BaseModel):
     results: list[StrictSearchResult]
+    provider: str = "fallback"
+    used_fallback: bool = True
+    last_error: str | None = None
 
 
 def _extract_pdf_pages(file_bytes: bytes) -> list[PageExtraction]:
@@ -179,6 +182,20 @@ async def strict_search(request: Request, payload: StrictSearchRequest) -> Stric
     vector_store = request.app.state.vector_store
     results = await vector_store.search(payload.query, top_k=payload.top_k)
 
+    provider = "fallback"
+    used_fallback = True
+    last_error = None
+    if hasattr(vector_store, "_has_connection_target") and vector_store._has_connection_target():
+        provider = "ahnlich"
+        used_fallback = False
+    if hasattr(vector_store, "_last_error"):
+        last_error = vector_store._last_error
+        if last_error:
+            used_fallback = True
+            provider = "fallback"
+            if "No DB client available" in last_error or "Connection refused" in last_error:
+                last_error = "Ahnlich is running but is not connected to a usable database backend. Configure the service with a real persistence backend (for example Neon/Postgres) before expecting vector-store writes to persist."
+
     filtered_results = []
     for result in results:
         metadata = result["metadata"]
@@ -195,4 +212,9 @@ async def strict_search(request: Request, payload: StrictSearchRequest) -> Stric
             )
         )
 
-    return StrictSearchResponse(results=filtered_results)
+    return StrictSearchResponse(
+        results=filtered_results,
+        provider=provider,
+        used_fallback=used_fallback,
+        last_error=last_error,
+    )

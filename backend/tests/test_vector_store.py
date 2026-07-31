@@ -1,6 +1,6 @@
 import pytest
 
-from app.services.vector_store import VectorStoreService
+from app.services.vector_store import AhnlichVectorStoreService, VectorStoreService
 
 
 @pytest.mark.asyncio
@@ -40,3 +40,13 @@ async def test_vector_store_delete_document_removes_matching_entries() -> None:
     results = await store.search("hello", top_k=5)
 
     assert all(item["metadata"]["document_id"] != "doc-3" for item in results)
+
+
+def test_ahnlich_service_reads_host_and_port_from_environment(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("AHNLICH_HOST", "ahnlich")
+    monkeypatch.setenv("AHNLICH_PORT", "1370")
+
+    service = AhnlichVectorStoreService()
+
+    assert service._host == "ahnlich"
+    assert service._port == 1370
