@@ -23,7 +23,9 @@ class VectorStoreService:
     _entries: list[dict[str, Any]] = field(default_factory=list)
 
     async def initialize(self) -> None:
-        self._entries = []
+        # The in-memory fallback store is ready on construction.
+        # Avoid clearing existing entries when initialize() is called again.
+        return
 
     async def upsert_chunks(self, chunks: list[str], metadata: list[dict[str, Any]]) -> None:
         if len(chunks) != len(metadata):

@@ -12,7 +12,7 @@ For a step-by-step human runbook, see [HUMAN_RUNBOOK.md](HUMAN_RUNBOOK.md).
 
 ## Run locally
 
-1. Install dependencies.
+1. Install dependencies with `python -m pip install --editable .`.
 2. Start the app with `fastapi dev app/main.py`.
 3. Open `http://127.0.0.1:8000`, `http://127.0.0.1:8000/docs`, or `http://127.0.0.1:8000/redoc`.
 

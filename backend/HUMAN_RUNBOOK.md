@@ -22,6 +22,10 @@ This starts both the API container and the Ahnlich container and exposes it at:
 - http://localhost:8000/docs
 - http://localhost:1370
 
+> Note: On first startup, the Ahnlich service may download ONNX embedding models from the internet. If outbound network access is restricted, model startup may fail or take longer than expected.
+>
+> Allow extra time for the model download to complete before assuming the backend is unavailable.
+
 If you want the backend to use an external Ahnlich service instead, set these environment variables before starting the stack:
 
 ```bash
