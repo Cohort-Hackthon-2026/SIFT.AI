@@ -35,6 +35,39 @@ def test_upload_endpoint_extracts_text_and_metadata(client) -> None:
     assert payload["chunks"][0]["page_number"] == 1
 
 
+def test_upload_rejects_file_over_size_limit(client, monkeypatch) -> None:
+    monkeypatch.setenv("MAX_UPLOAD_SIZE_BYTES", "10")
+
+    response = client.post(
+        "/api/v1/documents/upload",
+        data={"source_type": "pdf"},
+        files={"file": ("sample.pdf", _make_pdf_bytes("Hello world"), "application/pdf")},
+    )
+
+    assert response.status_code == 413
+
+
+def test_upload_warns_when_pdf_has_no_extractable_text(client) -> None:
+    blank_pdf = BytesIO()
+    document = fitz.open()
+    document.new_page()  # a real page with no text layer (e.g. scanned image)
+    document.save(blank_pdf)
+    document.close()
+    blank_pdf.seek(0)
+
+    response = client.post(
+        "/api/v1/documents/upload",
+        data={"source_type": "pdf"},
+        files={"file": ("scanned.pdf", blank_pdf.getvalue(), "application/pdf")},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["chunks"] == []
+    assert payload["warnings"]
+    assert "No extractable text" in payload["warnings"][0]
+
+
 def test_chunk_pages_splits_long_text_into_multiple_chunks() -> None:
     long_text = " ".join([f"sentence-{index}" for index in range(700)])
     pages = [PageExtraction(page_number=1, text=long_text, bounding_boxes=[], paragraph_index=1)]

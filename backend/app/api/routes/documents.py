@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from datetime import datetime, timezone
 from uuid import uuid4
 
@@ -9,6 +10,16 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 
 router = APIRouter(prefix="/api/v1")
+
+# Defense-in-depth: the frontend's react-dropzone config caps uploads at
+# 20MB client-side, but that's trivially bypassed (curl, a modified client,
+# etc.), so it also has to be enforced here. Read lazily (not at import
+# time) so it stays configurable/testable at runtime.
+DEFAULT_MAX_UPLOAD_SIZE_BYTES = 20 * 1024 * 1024
+
+
+def _max_upload_size_bytes() -> int:
+    return int(os.getenv("MAX_UPLOAD_SIZE_BYTES", str(DEFAULT_MAX_UPLOAD_SIZE_BYTES)))
 
 
 class DocumentUploadRequest(BaseModel):
@@ -52,6 +63,7 @@ class DocumentUploadResponse(BaseModel):
     source_type: str
     pages: list[PageExtraction]
     chunks: list[TextChunk]
+    warnings: list[str] = Field(default_factory=list)
 
 
 class DocumentSummary(BaseModel):
@@ -173,6 +185,10 @@ async def upload_document(
     if not file_bytes:
         raise HTTPException(status_code=400, detail="Uploaded file is empty")
 
+    if len(file_bytes) > _max_upload_size_bytes():
+        max_mb = _max_upload_size_bytes() / (1024 * 1024)
+        raise HTTPException(status_code=413, detail=f"File exceeds the {max_mb:.0f}MB upload limit")
+
     try:
         pages = _extract_pdf_pages(file_bytes)
     except Exception as exc:  # pragma: no cover - defensive path
@@ -180,6 +196,18 @@ async def upload_document(
 
     document_id = str(uuid4())
     chunks = _chunk_pages(pages, document_id=document_id, user_id=resolved_user_id)
+
+    warnings: list[str] = []
+    if pages and not chunks:
+        # Common with scanned/image-only PDFs: PyMuPDF finds pages but no
+        # extractable text layer, so there is nothing to embed or search.
+        # We still register the document (the user uploaded something real)
+        # but the frontend should surface this rather than silently showing
+        # "Ready" for a document that will never appear in search results.
+        warnings.append(
+            "No extractable text was found in this PDF (it may be a scanned image). "
+            "It was saved, but won't appear in search results until OCR support is added."
+        )
 
     vector_store = request.app.state.vector_store
     await vector_store.initialize()
@@ -210,6 +238,7 @@ async def upload_document(
         source_type=payload.source_type,
         pages=pages,
         chunks=chunks,
+        warnings=warnings,
     )
 
 
