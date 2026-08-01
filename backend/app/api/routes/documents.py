@@ -1,7 +1,10 @@
+from __future__ import annotations
+
+from datetime import datetime, timezone
 from uuid import uuid4
 
 import fitz
-from fastapi import APIRouter, File, Form, HTTPException, Request, UploadFile
+from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 
@@ -51,6 +54,26 @@ class DocumentUploadResponse(BaseModel):
     chunks: list[TextChunk]
 
 
+class DocumentSummary(BaseModel):
+    document_id: str
+    user_id: str
+    document_name: str
+    source_type: str
+    page_count: int
+    chunk_count: int
+    file_size_bytes: int
+    uploaded_at: datetime
+
+
+class DocumentListResponse(BaseModel):
+    documents: list[DocumentSummary]
+
+
+class DocumentDeleteResponse(BaseModel):
+    document_id: str
+    deleted: bool
+
+
 class StrictSearchRequest(BaseModel):
     query: str = Field(default="")
     user_id: str | None = Field(default=None)
@@ -68,6 +91,7 @@ class StrictSearchResponse(BaseModel):
     results: list[StrictSearchResult]
     provider: str = "fallback"
     used_fallback: bool = True
+    cached: bool = False
     last_error: str | None = None
 
 
@@ -164,6 +188,21 @@ async def upload_document(
         metadata=[chunk.metadata.model_dump() for chunk in chunks],
     )
 
+    document_registry = request.app.state.document_registry
+    await document_registry.initialize()
+    await document_registry.create_document(
+        {
+            "document_id": document_id,
+            "user_id": resolved_user_id,
+            "document_name": resolved_document_name,
+            "source_type": payload.source_type,
+            "page_count": len(pages),
+            "chunk_count": len(chunks),
+            "file_size_bytes": len(file_bytes),
+            "uploaded_at": datetime.now(timezone.utc),
+        }
+    )
+
     return DocumentUploadResponse(
         document_id=document_id,
         user_id=resolved_user_id,
@@ -174,13 +213,62 @@ async def upload_document(
     )
 
 
+@router.get("/documents", response_model=DocumentListResponse)
+async def list_documents(request: Request, user_id: str | None = Query(default=None)) -> DocumentListResponse:
+    document_registry = request.app.state.document_registry
+    await document_registry.initialize()
+    documents = await document_registry.list_documents(user_id=user_id)
+    return DocumentListResponse(documents=[DocumentSummary(**doc) for doc in documents])
+
+
+@router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
+async def delete_document(request: Request, document_id: str) -> DocumentDeleteResponse:
+    document_registry = request.app.state.document_registry
+    await document_registry.initialize()
+
+    existing = await document_registry.get_document(document_id)
+    if existing is None:
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' was not found")
+
+    vector_store = request.app.state.vector_store
+    await vector_store.delete_document(document_id)
+    deleted = await document_registry.delete_document(document_id)
+
+    return DocumentDeleteResponse(document_id=document_id, deleted=deleted)
+
+
 @router.post("/search/strict", response_model=StrictSearchResponse)
 async def strict_search(request: Request, payload: StrictSearchRequest) -> StrictSearchResponse:
     if not payload.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
+    search_cache = request.app.state.search_cache
+    cache_key = None
+    if hasattr(search_cache, "get"):
+        from app.services.cache import build_cache_key
+
+        cache_key = build_cache_key(payload.query, payload.user_id, payload.document_id, payload.top_k)
+        cached_results = await search_cache.get(cache_key)
+        if cached_results is not None:
+            return StrictSearchResponse(
+                results=[StrictSearchResult(**item) for item in cached_results],
+                provider="cache",
+                used_fallback=False,
+                cached=True,
+            )
+
+    # Filter at the Ahnlich query level via metadata predicates, rather than
+    # fetching top_k globally and discarding non-matching rows in Python -
+    # the build plan calls for "Queries Ahnlich Vector DB using metadata
+    # predicates (user_id, specific document_id)".
+    predicates: dict[str, str] = {}
+    if payload.user_id:
+        predicates["user_id"] = payload.user_id
+    if payload.document_id:
+        predicates["document_id"] = payload.document_id
+
     vector_store = request.app.state.vector_store
-    results = await vector_store.search(payload.query, top_k=payload.top_k)
+    results = await vector_store.search(payload.query, top_k=payload.top_k, predicates=predicates or None)
 
     provider = "fallback"
     used_fallback = True
@@ -193,28 +281,23 @@ async def strict_search(request: Request, payload: StrictSearchRequest) -> Stric
         if last_error:
             used_fallback = True
             provider = "fallback"
-            if "No DB client available" in last_error or "Connection refused" in last_error:
-                last_error = "Ahnlich is running but is not connected to a usable database backend. Configure the service with a real persistence backend (for example Neon/Postgres) before expecting vector-store writes to persist."
 
-    filtered_results = []
-    for result in results:
-        metadata = result["metadata"]
-        if payload.user_id and metadata.get("user_id") != payload.user_id:
-            continue
-        if payload.document_id and metadata.get("document_id") != payload.document_id:
-            continue
-
-        filtered_results.append(
-            StrictSearchResult(
-                text=result["text"],
-                score=result["score"],
-                metadata=ChunkMetadata(**metadata),
-            )
+    search_results = [
+        StrictSearchResult(
+            text=result["text"],
+            score=result["score"],
+            metadata=ChunkMetadata(**result["metadata"]),
         )
+        for result in results
+    ]
+
+    if cache_key is not None and not used_fallback:
+        await search_cache.set(cache_key, [result.model_dump() for result in search_results])
 
     return StrictSearchResponse(
-        results=filtered_results,
+        results=search_results,
         provider=provider,
         used_fallback=used_fallback,
+        cached=False,
         last_error=last_error,
     )

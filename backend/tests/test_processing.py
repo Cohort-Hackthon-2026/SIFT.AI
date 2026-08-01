@@ -1,13 +1,8 @@
 from io import BytesIO
 
 import fitz
-from fastapi.testclient import TestClient
 
 from app.api.routes.documents import PageExtraction, _chunk_pages
-from app.main import app
-
-
-client = TestClient(app)
 
 
 def _make_pdf_bytes(text: str) -> bytes:
@@ -21,7 +16,7 @@ def _make_pdf_bytes(text: str) -> bytes:
     return pdf_bytes.getvalue()
 
 
-def test_upload_endpoint_extracts_text_and_metadata() -> None:
+def test_upload_endpoint_extracts_text_and_metadata(client) -> None:
     response = client.post(
         "/api/v1/documents/upload",
         data={"source_type": "pdf"},

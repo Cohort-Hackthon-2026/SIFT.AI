@@ -1,12 +1,6 @@
 from io import BytesIO
 
 import fitz
-from fastapi.testclient import TestClient
-
-from app.main import app
-
-
-client = TestClient(app)
 
 
 def _make_pdf_bytes(text: str) -> bytes:
@@ -20,7 +14,7 @@ def _make_pdf_bytes(text: str) -> bytes:
     return pdf_bytes.getvalue()
 
 
-def test_strict_search_returns_matching_chunks_for_document() -> None:
+def test_strict_search_returns_matching_chunks_for_document(client) -> None:
     upload_response = client.post(
         "/api/v1/documents/upload",
         data={"user_id": "user-123", "document_name": "sample.pdf", "source_type": "pdf"},
@@ -40,3 +34,33 @@ def test_strict_search_returns_matching_chunks_for_document() -> None:
     assert payload["results"]
     assert payload["results"][0]["metadata"]["document_id"] == document_id
     assert payload["results"][0]["metadata"]["user_id"] == "user-123"
+    # page_number must round-trip as an int, not a string
+    assert isinstance(payload["results"][0]["metadata"]["page_number"], int)
+
+
+def test_strict_search_predicate_excludes_other_documents(client) -> None:
+    client.post(
+        "/api/v1/documents/upload",
+        data={"user_id": "user-A", "document_name": "doc-a.pdf"},
+        files={"file": ("doc-a.pdf", _make_pdf_bytes("unique zebra content"), "application/pdf")},
+    )
+    upload_b = client.post(
+        "/api/v1/documents/upload",
+        data={"user_id": "user-A", "document_name": "doc-b.pdf"},
+        files={"file": ("doc-b.pdf", _make_pdf_bytes("unique zebra content"), "application/pdf")},
+    )
+    document_b_id = upload_b.json()["document_id"]
+
+    search_response = client.post(
+        "/api/v1/search/strict",
+        json={"query": "zebra", "user_id": "user-A", "document_id": document_b_id, "top_k": 5},
+    )
+
+    payload = search_response.json()
+    assert payload["results"]
+    assert all(result["metadata"]["document_id"] == document_b_id for result in payload["results"])
+
+
+def test_strict_search_rejects_empty_query(client) -> None:
+    response = client.post("/api/v1/search/strict", json={"query": "   "})
+    assert response.status_code == 400
