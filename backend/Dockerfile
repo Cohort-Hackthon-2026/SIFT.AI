@@ -6,7 +6,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 WORKDIR /app
 
 RUN apt-get update \
-    && apt-get install --no-install-recommends -y build-essential \
+    && apt-get install --no-install-recommends -y build-essential ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY pyproject.toml README.md ./
