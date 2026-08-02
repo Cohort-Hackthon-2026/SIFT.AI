@@ -13,8 +13,8 @@ COPY pyproject.toml README.md ./
 COPY app ./app
 
 RUN python -m pip install --upgrade pip \
-    && python -m pip install --no-cache-dir .
+    && python -m pip install --no-cache-dir --default-timeout=180 --retries 10 .
 
 EXPOSE 8000
 
-CMD ["fastapi", "dev", "--entrypoint", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
