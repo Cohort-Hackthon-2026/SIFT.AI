@@ -16,6 +16,16 @@ services:
       DATABASE_URL: ${DATABASE_URL:-}
       # Search result cache (optional). Falls back to a no-op cache if unset.
       REDIS_URL: redis://redis:6379/0
+      # Auth (Clerk). Set these in a local .env file (docker compose reads
+      # it automatically) - see .env.example for where to find each value
+      # in the Clerk Dashboard. Defaults to AUTH_ENABLED=true, which will
+      # reject every request with 401 until CLERK_JWKS_URL/CLERK_ISSUER are
+      # actually set - set AUTH_ENABLED=false in .env for a quick local
+      # smoke test before you've created a Clerk account.
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
+      CLERK_ISSUER: ${CLERK_ISSUER:-}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-http://localhost:5173}
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
       # --reload's default file watcher (inotify) fails with "Cannot
       # allocate memory" on Windows/WSL2 bind mounts (.:/app crosses the
       # Windows<->WSL2 filesystem bridge, which inotify handles poorly
@@ -60,4 +70,3 @@ services:
     image: redis:7-alpine
     ports:
       - "6379:6379"
-      

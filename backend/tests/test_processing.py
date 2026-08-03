@@ -26,7 +26,7 @@ def test_upload_endpoint_extracts_text_and_metadata(client) -> None:
     assert response.status_code == 200
     payload = response.json()
     assert payload["document_name"] == "sample.pdf"
-    assert payload["user_id"].startswith("anonymous-")
+    assert payload["user_id"] == "test-user-1"
     assert payload["pages"][0]["page_number"] == 1
     assert "Hello world" in payload["pages"][0]["text"]
     assert payload["pages"][0]["paragraph_index"] == 1

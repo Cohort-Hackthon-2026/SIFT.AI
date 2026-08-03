@@ -8,17 +8,27 @@ your section in `Updated_AI_Build_Plan.md`.
 
 A FastAPI app (`backend/app/`) with:
 
+- **Every endpoint below now requires a valid Clerk session token**
+  (`Authorization: Bearer <token>`) - see `app/auth.py` and
+  `backend/HUMAN_RUNBOOK.md`'s Auth section. `/chat/stream` should follow
+  the same pattern: `current_user_id: str = Depends(get_current_user_id)`
+  from `app.auth`, not a client-supplied field. Current account model is
+  individual users only (no firm/organization support yet - see
+  `frontend/CLERK_AUTH_INTEGRATION.md` for the reasoning).
 - `POST /api/v1/documents/upload` - PDF -> extracted pages -> chunked text ->
   embedded and stored in Ahnlich, with a Postgres-backed document registry
   entry (name, page count, size, upload time).
-- `POST /api/v1/search/strict` - takes `{query, user_id?, document_id?, top_k}`,
-  embeds the query via Ahnlich's AI proxy, filters server-side by metadata
-  predicates (`user_id`, `document_id`), and returns scored chunk matches
-  with full citation metadata (`document_id`, `page_number`, `chunk_id`,
-  `user_id`).
+- `POST /api/v1/search/strict` - takes `{query, document_id?, top_k}` (no
+  `user_id` field - it's derived from the caller's token, not accepted from
+  the client), embeds the query via Ahnlich's AI proxy, filters server-side
+  by metadata predicates (`user_id`, `document_id`), and returns scored
+  chunk matches with full citation metadata (`document_id`, `page_number`,
+  `chunk_id`, `user_id`).
 - `GET /api/v1/documents`, `DELETE /api/v1/documents/{id}` - document
   management, not directly relevant to your work except that a document a
   user just deleted will simply stop appearing in strict-search results.
+  Both are scoped to the authenticated user only - `DELETE` on someone
+  else's document returns `404` (not `403`, deliberately - see `app/api/routes/documents.py`).
 - `POST /api/v1/audio/transcribe` - Whisper transcription, used by the
   frontend's voice-input fallback; not something you call, just context for
   why `/chat/stream` requests may originate from transcribed audio text with
@@ -28,7 +38,7 @@ A FastAPI app (`backend/app/`) with:
   `/search/strict`, so you get this for free by calling that endpoint;
   nothing extra needed on your end.
 
-All 19 backend tests pass (`cd backend && python -m pytest`). You can run
+All 30 backend tests pass (`cd backend && python -m pytest`). You can run
 the app locally with `docker compose up --build` (starts the API, Ahnlich,
 and Redis together) - see `backend/HUMAN_RUNBOOK.md`.
 
@@ -47,15 +57,21 @@ you reuse the exact predicate-filtering and caching logic already built. Your
 chat route would do roughly:
 
 ```python
-vector_store = request.app.state.vector_store
-predicates = {}
-if user_id:
-    predicates["user_id"] = user_id
-if document_id:
-    predicates["document_id"] = document_id
+from app.auth import get_current_user_id
 
-results = await vector_store.search(query, top_k=5, predicates=predicates or None)
-# results: list of {"text": str, "score": float, "metadata": {...}}
+@router.post("/chat/stream")
+async def chat_stream(
+    request: Request,
+    payload: ChatRequest,
+    current_user_id: str = Depends(get_current_user_id),
+):
+    vector_store = request.app.state.vector_store
+    predicates = {"user_id": current_user_id}
+    if payload.document_id:
+        predicates["document_id"] = payload.document_id
+
+    results = await vector_store.search(payload.query, top_k=5, predicates=predicates)
+    # results: list of {"text": str, "score": float, "metadata": {...}}
 ```
 
 **Option B - call the HTTP endpoint.** Simpler to keep the two developers'
@@ -151,15 +167,18 @@ Consider caching this resolution per request (a chat turn typically cites
    `document_id` and merge/re-rank the results yourself (by `score`) before
    building the prompt - don't assume you can pass a list through.
 
-7. **User scoping until auth lands.** `user_id` is currently just a
-   free-text field the frontend sends (see `FRONTEND_INTEGRATION.md`'s auth
-   note) - there's no verification anyone owns that ID. Once real auth is
-   wired in, make sure `/chat/stream` derives `user_id` from the
-   authenticated session/token rather than trusting a client-supplied field
-   in the request body, otherwise a user could pass another user's ID and
-   query their documents. This matters more here than it did for Backend
-   Developer 1's endpoints since yours is the one assembling final answers
-   a lawyer will act on.
+7. **Auth is already implemented - use it, don't re-derive it.** `app.auth`
+   has the full Clerk JWT verification (JWKS fetch/cache, issuer check,
+   optional `azp` check). Use `Depends(get_current_user_id)` on
+   `/chat/stream` exactly as shown above rather than writing your own
+   verification - there's no reason for two independent JWT-checking code
+   paths in the same app, and Backend Developer 1's version is already
+   tested (`tests/test_auth.py`, including cross-user isolation) against a
+   self-signed test JWT that mirrors Clerk's real claim shape. This matters
+   more for your endpoint than it did for Backend Developer 1's, since
+   yours assembles the final answer a lawyer will act on - a user_id mixup
+   here means a wrong answer sourced from someone else's case file, not
+   just a wrong document listing.
 
 8. **Legal-domain framing for your prompts.** This is a research tool for
    lawyers, not a general chatbot - a few things worth building into your

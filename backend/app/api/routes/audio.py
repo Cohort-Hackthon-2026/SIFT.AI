@@ -7,8 +7,10 @@ import tempfile
 from functools import lru_cache
 from pathlib import Path
 
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 from pydantic import BaseModel
+
+from app.auth import get_current_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +79,7 @@ def _transcribe_sync(file_path: str, language: str | None) -> TranscriptionRespo
 async def transcribe_audio(
     file: UploadFile = File(...),
     language: str | None = None,
+    current_user_id: str = Depends(get_current_user_id),
 ) -> TranscriptionResponse:
     """Transcribe an uploaded audio clip with Faster-Whisper.
 

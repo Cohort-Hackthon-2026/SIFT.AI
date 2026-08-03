@@ -12,8 +12,7 @@ RUN apt-get update \
 COPY pyproject.toml README.md ./
 COPY app ./app
 
-RUN python -m pip install --upgrade pip \
-    && python -m pip install --no-cache-dir --default-timeout=180 --retries 10 .
+RUN python -m pip install --no-cache-dir                     --default-timeout=300 --retries 10 .
 
 EXPOSE 8000
 

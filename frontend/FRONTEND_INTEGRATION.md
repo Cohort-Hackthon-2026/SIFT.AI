@@ -6,6 +6,12 @@ possible, and edge cases to handle. It does not cover chat/streaming - that's
 Backend Developer 2's endpoint (`POST /api/v1/chat/stream`), described at the
 bottom under "What this repo does NOT give you yet."
 
+**Every endpoint below now requires a Clerk session token** - read
+`CLERK_AUTH_INTEGRATION.md` (same folder) first and build the sign-in/sign-up
+pages described there before wiring anything here, or every request will
+return `401`. The `api.js` shown in section 0 below is the plain version for
+reference; `CLERK_AUTH_INTEGRATION.md` has the real one that attaches a token.
+
 ## 0. Before any endpoint works: two setup gaps
 
 The frontend currently has **zero HTTP calls anywhere** - no `fetch`, no
@@ -40,8 +46,7 @@ export const api = {
   uploadDocument: (formData) =>
     request("/api/v1/documents/upload", { method: "POST", body: formData }),
 
-  listDocuments: (userId) =>
-    request(`/api/v1/documents?user_id=${encodeURIComponent(userId)}`),
+  listDocuments: () => request("/api/v1/documents"),
 
   deleteDocument: (documentId) =>
     request(`/api/v1/documents/${documentId}`, { method: "DELETE" }),
@@ -83,9 +88,11 @@ like this:
 
 1. Add an `uploadFile` action to `store/upload.js` that, per file:
    - sets `status: "processing"` via `updateFile`
-   - builds a `FormData` with `file`, and optionally `user_id` /
-     `document_name` fields (see auth note below)
-   - calls `api.uploadDocument(formData)`
+   - builds a `FormData` with `file` and optionally `document_name`
+     (`user_id` is not a field here - see CLERK_AUTH_INTEGRATION.md)
+   - calls `api.uploadDocument(formData)` (auth is attached automatically -
+     see the auth bridge pattern in `CLERK_AUTH_INTEGRATION.md`, no token
+     argument needed here)
    - on success: `updateFile(id, { status: "completed", documentId: response.document_id, pages: response.page_count })`
      and also push the new document into `store/documents.js` (see next
      section) so the document list and upload drawer stay in sync
@@ -130,13 +137,15 @@ now provides. Build:
 
 1. **`store/documents.js`** - a Zustand store with:
    - `documents: []`
-   - `fetchDocuments(userId)` -> calls `api.listDocuments(userId)`, sets
-     `documents`
+   - `fetchDocuments()` -> calls `api.listDocuments()`, sets `documents`
+     (auth is attached automatically inside `api.js` - see
+     `CLERK_AUTH_INTEGRATION.md`'s auth bridge pattern, no token argument
+     needed here)
    - `removeDocument(documentId)` -> optimistic local removal, used after a
      successful delete (see next section)
-   - Call `fetchDocuments` once on app mount (in `Chat.jsx` or `App.jsx`
-     via `useEffect`) and again after every successful upload, so the drawer
-     never goes stale.
+   - Call `fetchDocuments()` once on app mount (in `Chat.jsx` or `App.jsx`
+     via `useEffect`) and again after every successful upload, so the
+     drawer never goes stale.
 
 2. **`DocumentCard.jsx`** - one document's summary row/card. The API gives
    you exactly the fields the build plan asks for: `document_name`,
@@ -161,12 +170,12 @@ now provides. Build:
 5. **Edge case - empty state.** If `documents` is `[]`, show a clear "No
    documents yet - upload one to get started" rather than a blank drawer.
 
-6. **Edge case - user scoping.** `GET /api/v1/documents` requires a
-   `user_id` query param to filter; omit it and you get every document from
-   every anonymous session. Until auth exists, decide on one consistent
-   `user_id` for the browser session (see the Auth Note at the bottom) and
-   use it everywhere - upload, list, delete, and eventually search all need
-   the *same* value or a user will see other sessions' documents.
+6. **Edge case - user scoping.** `GET /api/v1/documents` no longer takes a
+   `user_id` query param at all - it always returns only the authenticated
+   user's own documents, scoped server-side from their Clerk token. As long
+   as `api.js` is wired to the auth bridge (see
+   `CLERK_AUTH_INTEGRATION.md`), scoping is automatic; there's no
+   client-side bookkeeping needed here anymore.
 
 ---
 
@@ -280,19 +289,19 @@ not just an empty stub:
 
 ---
 
-## Auth note (flagged for the upcoming auth work)
+## Auth (now implemented backend-side - see CLERK_AUTH_INTEGRATION.md)
 
-Every endpoint above accepts an optional `user_id`. Right now, if the
-frontend never sends one, the backend generates a random
-`anonymous-<8 hex chars>` per upload - meaning **two uploads from the same
-browser tab, without an explicit `user_id`, are currently treated as two
-different users** and won't see each other's documents. Until real auth
-lands:
+The workaround described in earlier drafts of this doc (generate a random
+per-browser ID, send it as `user_id`) is obsolete - **the backend no longer
+accepts a client-supplied `user_id` at all.** Every endpoint now requires a
+valid Clerk session token and derives `user_id` from it server-side; passing
+a `user_id` field anywhere in a request body/form/query string is simply
+ignored (it doesn't exist in the request schemas anymore).
 
-- Generate one random ID per browser (e.g. `crypto.randomUUID()`, stored in
-  `localStorage`) the first time the app loads, and send it as `user_id` on
-  every request (upload, list, delete). This at least makes "my documents"
-  consistent within one browser across a session.
-- When auth ships, swap that local ID for the authenticated user's real ID
-  from the auth token - the request shapes don't change, only where
-  `user_id` comes from.
+This means the upload/list/delete/search wiring described earlier in this
+doc needs one addition beyond what's shown there: attach a Clerk token to
+every request. See `CLERK_AUTH_INTEGRATION.md` in this same folder for the
+full setup (installing `@clerk/react`, building sign-in/sign-up pages -
+there are none yet - and the updated `api.js` that attaches the token). Do
+that setup before wiring the endpoints in this document, since every one of
+them will now return `401` without a valid token.

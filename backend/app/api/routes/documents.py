@@ -5,9 +5,11 @@ from datetime import datetime, timezone
 from uuid import uuid4
 
 import fitz
-from fastapi import APIRouter, File, Form, HTTPException, Query, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
+
+from app.auth import get_current_user_id
 
 router = APIRouter(prefix="/api/v1")
 
@@ -23,7 +25,6 @@ def _max_upload_size_bytes() -> int:
 
 
 class DocumentUploadRequest(BaseModel):
-    user_id: str | None = Field(default=None)
     document_name: str | None = Field(default=None)
     source_type: str = Field(default="pdf")
 
@@ -88,7 +89,6 @@ class DocumentDeleteResponse(BaseModel):
 
 class StrictSearchRequest(BaseModel):
     query: str = Field(default="")
-    user_id: str | None = Field(default=None)
     document_id: str | None = Field(default=None)
     top_k: int = Field(default=5, ge=1, le=20)
 
@@ -165,17 +165,12 @@ def _chunk_pages(pages: list[PageExtraction], document_id: str, user_id: str) ->
 async def upload_document(
     request: Request,
     file: UploadFile = File(...),
-    user_id: str | None = Form(default=None),
     document_name: str | None = Form(default=None),
     source_type: str = Form(default="pdf"),
+    current_user_id: str = Depends(get_current_user_id),
 ) -> DocumentUploadResponse:
-    payload = DocumentUploadRequest(
-        user_id=user_id,
-        document_name=document_name,
-        source_type=source_type,
-    )
+    payload = DocumentUploadRequest(document_name=document_name, source_type=source_type)
 
-    resolved_user_id = payload.user_id or f"anonymous-{uuid4().hex[:8]}"
     resolved_document_name = payload.document_name or file.filename or "uploaded-document.pdf"
 
     if not resolved_document_name.lower().endswith(".pdf") and file.content_type not in {"application/pdf", "application/octet-stream"}:
@@ -195,7 +190,7 @@ async def upload_document(
         raise HTTPException(status_code=400, detail=f"Unable to process PDF: {exc}") from exc
 
     document_id = str(uuid4())
-    chunks = _chunk_pages(pages, document_id=document_id, user_id=resolved_user_id)
+    chunks = _chunk_pages(pages, document_id=document_id, user_id=current_user_id)
 
     warnings: list[str] = []
     if pages and not chunks:
@@ -221,7 +216,7 @@ async def upload_document(
     await document_registry.create_document(
         {
             "document_id": document_id,
-            "user_id": resolved_user_id,
+            "user_id": current_user_id,
             "document_name": resolved_document_name,
             "source_type": payload.source_type,
             "page_count": len(pages),
@@ -233,7 +228,7 @@ async def upload_document(
 
     return DocumentUploadResponse(
         document_id=document_id,
-        user_id=resolved_user_id,
+        user_id=current_user_id,
         document_name=resolved_document_name,
         source_type=payload.source_type,
         pages=pages,
@@ -243,20 +238,27 @@ async def upload_document(
 
 
 @router.get("/documents", response_model=DocumentListResponse)
-async def list_documents(request: Request, user_id: str | None = Query(default=None)) -> DocumentListResponse:
+async def list_documents(request: Request, current_user_id: str = Depends(get_current_user_id)) -> DocumentListResponse:
     document_registry = request.app.state.document_registry
     await document_registry.initialize()
-    documents = await document_registry.list_documents(user_id=user_id)
+    documents = await document_registry.list_documents(user_id=current_user_id)
     return DocumentListResponse(documents=[DocumentSummary(**doc) for doc in documents])
 
 
 @router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
-async def delete_document(request: Request, document_id: str) -> DocumentDeleteResponse:
+async def delete_document(
+    request: Request,
+    document_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+) -> DocumentDeleteResponse:
     document_registry = request.app.state.document_registry
     await document_registry.initialize()
 
     existing = await document_registry.get_document(document_id)
-    if existing is None:
+    # Same 404 whether the document doesn't exist at all or belongs to
+    # someone else - a distinct "403 forbidden" would confirm to an
+    # attacker that a given document_id exists, just not theirs.
+    if existing is None or existing.get("user_id") != current_user_id:
         raise HTTPException(status_code=404, detail=f"Document '{document_id}' was not found")
 
     vector_store = request.app.state.vector_store
@@ -267,7 +269,11 @@ async def delete_document(request: Request, document_id: str) -> DocumentDeleteR
 
 
 @router.post("/search/strict", response_model=StrictSearchResponse)
-async def strict_search(request: Request, payload: StrictSearchRequest) -> StrictSearchResponse:
+async def strict_search(
+    request: Request,
+    payload: StrictSearchRequest,
+    current_user_id: str = Depends(get_current_user_id),
+) -> StrictSearchResponse:
     if not payload.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
 
@@ -276,7 +282,7 @@ async def strict_search(request: Request, payload: StrictSearchRequest) -> Stric
     if hasattr(search_cache, "get"):
         from app.services.cache import build_cache_key
 
-        cache_key = build_cache_key(payload.query, payload.user_id, payload.document_id, payload.top_k)
+        cache_key = build_cache_key(payload.query, current_user_id, payload.document_id, payload.top_k)
         cached_results = await search_cache.get(cache_key)
         if cached_results is not None:
             return StrictSearchResponse(
@@ -289,15 +295,15 @@ async def strict_search(request: Request, payload: StrictSearchRequest) -> Stric
     # Filter at the Ahnlich query level via metadata predicates, rather than
     # fetching top_k globally and discarding non-matching rows in Python -
     # the build plan calls for "Queries Ahnlich Vector DB using metadata
-    # predicates (user_id, specific document_id)".
-    predicates: dict[str, str] = {}
-    if payload.user_id:
-        predicates["user_id"] = payload.user_id
+    # predicates (user_id, specific document_id)". user_id always comes from
+    # the verified token now, never from the request body - a signed-in user
+    # can only ever search their own documents.
+    predicates: dict[str, str] = {"user_id": current_user_id}
     if payload.document_id:
         predicates["document_id"] = payload.document_id
 
     vector_store = request.app.state.vector_store
-    results = await vector_store.search(payload.query, top_k=payload.top_k, predicates=predicates or None)
+    results = await vector_store.search(payload.query, top_k=payload.top_k, predicates=predicates)
 
     provider = "fallback"
     used_fallback = True
