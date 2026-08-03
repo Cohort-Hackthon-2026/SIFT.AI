@@ -2,8 +2,71 @@ services:
   api:
     build:
       context: .
+      network: host
     ports:
       - "8000:8000"
+    environment:
+      AHNLICH_HOST: ahnlich
+      AHNLICH_PORT: 1370
+      USE_AHNLICH: "true"
+      AHNLICH_STORE_NAME: "legal_docs"
+      # Document registry (GET/DELETE /documents). Point this at your Neon
+      # (or any Postgres) database. Falls back to an in-memory registry
+      # (lost on restart) if unset - fine for a quick local smoke test.
+      DATABASE_URL: ${DATABASE_URL:-}
+      # Search result cache (optional). Falls back to a no-op cache if unset.
+      REDIS_URL: redis://redis:6379/0
+      # Auth (Clerk). Set these in a local .env file (docker compose reads
+      # it automatically) - see .env.example for where to find each value
+      # in the Clerk Dashboard. Defaults to AUTH_ENABLED=true, which will
+      # reject every request with 401 until CLERK_JWKS_URL/CLERK_ISSUER are
+      # actually set - set AUTH_ENABLED=false in .env for a quick local
+      # smoke test before you've created a Clerk account.
+      CLERK_JWKS_URL: ${CLERK_JWKS_URL:-}
+      CLERK_ISSUER: ${CLERK_ISSUER:-}
+      CLERK_AUTHORIZED_PARTIES: ${CLERK_AUTHORIZED_PARTIES:-http://localhost:5173}
+      AUTH_ENABLED: ${AUTH_ENABLED:-true}
+      # --reload's default file watcher (inotify) fails with "Cannot
+      # allocate memory" on Windows/WSL2 bind mounts (.:/app crosses the
+      # Windows<->WSL2 filesystem bridge, which inotify handles poorly
+      # regardless of how much RAM the WSL2 VM has). Polling sidesteps
+      # inotify entirely - slightly higher CPU usage, but reliable here.
+      WATCHFILES_FORCE_POLLING: "true"
     volumes:
       - .:/app
-    command: fastapi dev --entrypoint app.main:app --host 0.0.0.0 --port 8000
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    depends_on:
+      - ahnlich
+      - redis
+
+  ahnlich_db:
+    image: ghcr.io/deven96/ahnlich-db:latest
+    entrypoint: ["ahnlich-db"]
+    command: ["run", "--host", "0.0.0.0", "--port", "1369"]
+    ports:
+      - "1369:1369"
+
+  ahnlich:
+    image: ghcr.io/deven96/ahnlich-ai:latest
+    entrypoint: ["ahnlich-ai"]
+    command:
+      [
+        "run",
+        "--host",
+        "0.0.0.0",
+        "--port",
+        "1370",
+        "--db-host",
+        "ahnlich_db",
+        "--db-port",
+        "1369",
+      ]
+    ports:
+      - "1370:1370"
+    depends_on:
+      - ahnlich_db
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
