@@ -1,5 +1,4 @@
-from __future__ import annotations
-
+import asyncio
 import logging
 import os
 from dataclasses import dataclass, field
@@ -7,6 +6,35 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 logger = logging.getLogger(__name__)
+
+# Top-level optional imports for Ahnlich AI gRPC client
+# Assign None defaults first so the type-checker always sees these names as
+# defined (eliminates "possibly undefined" IDE warnings).  At runtime the
+# try-block below overwrites them with the real classes when the SDK is
+# available; the HAS_AHNLICH_SDK flag guards every call site.
+Channel = None
+keyval = None
+metadata_module = None
+predicates_module = None
+ai_query = None
+AiModel = None
+PreprocessAction = None
+Algorithm = None
+AiServiceStub = None
+
+try:
+    from grpclib.client import Channel  # type: ignore[assignment]
+    from ahnlich_client_py.grpc import keyval, metadata as metadata_module, predicates as predicates_module  # type: ignore[assignment]
+    from ahnlich_client_py.grpc.ai import query as ai_query  # type: ignore[assignment]
+    from ahnlich_client_py.grpc.ai.models import AiModel  # type: ignore[assignment]
+    from ahnlich_client_py.grpc.ai.preprocess import PreprocessAction  # type: ignore[assignment]
+    from ahnlich_client_py.grpc.algorithm.algorithms import Algorithm  # type: ignore[assignment]
+    from ahnlich_client_py.grpc.services.ai_service import AiServiceStub  # type: ignore[assignment]
+
+    HAS_AHNLICH_SDK = True
+except ImportError:
+    HAS_AHNLICH_SDK = False
+
 
 
 class VectorStoreProtocol(Protocol):
@@ -180,39 +208,33 @@ class AhnlichVectorStoreService:
         self._last_error = None
 
     async def initialize(self) -> None:
-        if not self._has_connection_target():
+        if not self._has_connection_target() or not HAS_AHNLICH_SDK:
             await self._fallback.initialize()
             return
 
         self._clear_last_error()
 
-        try:
-            from grpclib.client import Channel
-            from ahnlich_client_py.grpc.services.ai_service import AiServiceStub
-            from ahnlich_client_py.grpc.ai import query as ai_query
-            from ahnlich_client_py.grpc.ai.models import AiModel
-        except ImportError as exc:
-            self._set_last_error(exc)
-            await self._fallback.initialize()
-            return
-
         host, port = self._connection_settings()
         try:
             async with Channel(host=host, port=port) as channel:
                 client = AiServiceStub(channel)
-                response = await client.list_stores(ai_query.ListStores())
+                # Timeout after 3 seconds if Ahnlich container is initializing models
+                response = await asyncio.wait_for(client.list_stores(ai_query.ListStores()), timeout=3.0)
                 existing_stores = {store.name for store in response.stores}
 
                 if self._store_name not in existing_stores:
-                    await client.create_store(
-                        ai_query.CreateStore(
-                            store=self._store_name,
-                            index_model=AiModel.ALL_MINI_LM_L6_V2,
-                            query_model=AiModel.ALL_MINI_LM_L6_V2,
-                            predicates=["document_id", "user_id", "page_number", "chunk_id"],
-                            error_if_exists=False,
-                            store_original=True,
-                        )
+                    await asyncio.wait_for(
+                        client.create_store(
+                            ai_query.CreateStore(
+                                store=self._store_name,
+                                index_model=AiModel.ALL_MINI_LM_L6_V2,
+                                query_model=AiModel.ALL_MINI_LM_L6_V2,
+                                predicates=["document_id", "user_id", "page_number", "chunk_id"],
+                                error_if_exists=False,
+                                store_original=True,
+                            )
+                        ),
+                        timeout=5.0
                     )
                 self._clear_last_error()
         except Exception as exc:
@@ -223,18 +245,7 @@ class AhnlichVectorStoreService:
         if len(chunks) != len(metadata):
             raise ValueError("chunks and metadata must be the same length")
 
-        if not self._has_connection_target():
-            await self._fallback.upsert_chunks(chunks, metadata)
-            return
-
-        try:
-            from grpclib.client import Channel
-            from ahnlich_client_py.grpc.services.ai_service import AiServiceStub
-            from ahnlich_client_py.grpc.ai import query as ai_query
-            from ahnlich_client_py.grpc.ai.preprocess import PreprocessAction
-            from ahnlich_client_py.grpc import keyval, metadata as metadata_module
-        except ImportError as exc:
-            self._set_last_error(exc)
+        if not self._has_connection_target() or not HAS_AHNLICH_SDK:
             await self._fallback.upsert_chunks(chunks, metadata)
             return
 
@@ -276,18 +287,7 @@ class AhnlichVectorStoreService:
         top_k: int = 5,
         predicates: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
-        if not self._has_connection_target():
-            return await self._fallback.search(query=query, top_k=top_k, predicates=predicates)
-
-        try:
-            from grpclib.client import Channel
-            from ahnlich_client_py.grpc.services.ai_service import AiServiceStub
-            from ahnlich_client_py.grpc.ai import query as ai_query
-            from ahnlich_client_py.grpc.ai.preprocess import PreprocessAction
-            from ahnlich_client_py.grpc.algorithm.algorithms import Algorithm
-            from ahnlich_client_py.grpc import keyval, predicates as predicates_module, metadata as metadata_module
-        except ImportError as exc:
-            self._set_last_error(exc)
+        if not self._has_connection_target() or not HAS_AHNLICH_SDK:
             return await self._fallback.search(query=query, top_k=top_k, predicates=predicates)
 
         condition = (
@@ -318,10 +318,6 @@ class AhnlichVectorStoreService:
                     if entry.key is not None and hasattr(entry.key, "raw_string"):
                         chunk_text = entry.key.raw_string
 
-                    # NOTE: GetSimNEntry has a `similarity` field (a Similarity
-                    # message with a `.value` float), not a bare `.score`
-                    # attribute. Reading `.score` here always silently
-                    # returned 0.0 for every result.
                     score = float(entry.similarity.value) if entry.similarity is not None else 0.0
 
                     results.append({
@@ -336,16 +332,7 @@ class AhnlichVectorStoreService:
             return await self._fallback.search(query=query, top_k=top_k, predicates=predicates)
 
     async def delete_document(self, document_id: str) -> None:
-        if not self._has_connection_target():
-            await self._fallback.delete_document(document_id)
-            return
-
-        try:
-            from grpclib.client import Channel
-            from ahnlich_client_py.grpc.services.ai_service import AiServiceStub
-            from ahnlich_client_py.grpc.ai import query as ai_query
-            from ahnlich_client_py.grpc import predicates as predicates_module, metadata as metadata_module
-        except ImportError:
+        if not self._has_connection_target() or not HAS_AHNLICH_SDK:
             await self._fallback.delete_document(document_id)
             return
 
