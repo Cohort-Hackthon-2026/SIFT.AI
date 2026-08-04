@@ -1,4 +1,5 @@
 from io import BytesIO
+from unittest.mock import AsyncMock, MagicMock
 
 import fitz
 
@@ -103,3 +104,71 @@ def test_cannot_delete_another_users_document(client, as_user) -> None:
     as_user("owner")
     list_response = client.get("/api/v1/documents")
     assert any(doc["document_id"] == document_id for doc in list_response.json()["documents"])
+
+
+# ---------------------------------------------------------------------------
+# GET /api/v1/documents/{document_id}/file  (PDF file serving via R2)
+# ---------------------------------------------------------------------------
+
+def test_get_document_file_returns_404_for_unknown_document(client) -> None:
+    response = client.get("/api/v1/documents/does-not-exist/file")
+    assert response.status_code == 404
+
+
+def test_get_document_file_returns_404_for_other_users_document(client, as_user) -> None:
+    """Users cannot access other users' PDF files (404, not 403)."""
+    as_user("owner")
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        data={"document_name": "private.pdf"},
+        files={"file": ("private.pdf", _make_pdf_bytes("confidential"), "application/pdf")},
+    )
+    document_id = upload_response.json()["document_id"]
+
+    as_user("attacker")
+    response = client.get(f"/api/v1/documents/{document_id}/file")
+    assert response.status_code == 404
+
+
+def test_get_document_file_returns_404_when_storage_returns_no_bytes(client) -> None:
+    """With NoopStorageService (no R2 configured), get_pdf_bytes returns None → 404."""
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        data={"document_name": "no-r2.pdf"},
+        files={"file": ("no-r2.pdf", _make_pdf_bytes("content"), "application/pdf")},
+    )
+    assert upload_response.status_code == 200
+    document_id = upload_response.json()["document_id"]
+
+    # Default test storage is NoopStorageService (via conftest autouse fixture)
+    response = client.get(f"/api/v1/documents/{document_id}/file")
+    assert response.status_code == 404
+
+
+def test_get_document_file_returns_pdf_bytes_when_r2_has_file(client) -> None:
+    """When storage returns bytes, endpoint responds 200 application/pdf."""
+    from app.main import app
+
+    # Upload a document so the registry has it
+    upload_response = client.post(
+        "/api/v1/documents/upload",
+        data={"document_name": "report.pdf"},
+        files={"file": ("report.pdf", _make_pdf_bytes("PDF content"), "application/pdf")},
+    )
+    document_id = upload_response.json()["document_id"]
+
+    # Temporarily override app.state.storage with a mock that returns bytes
+    fake_pdf_bytes = _make_pdf_bytes("PDF content")
+    mock_storage = MagicMock()
+    mock_storage.get_pdf_bytes = AsyncMock(return_value=fake_pdf_bytes)
+    original_storage = app.state.storage
+    app.state.storage = mock_storage
+
+    try:
+        response = client.get(f"/api/v1/documents/{document_id}/file")
+        assert response.status_code == 200
+        assert response.headers["content-type"] == "application/pdf"
+        assert response.content == fake_pdf_bytes
+        mock_storage.get_pdf_bytes.assert_awaited_once_with(document_id)
+    finally:
+        app.state.storage = original_storage
