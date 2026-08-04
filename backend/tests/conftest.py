@@ -1,10 +1,22 @@
 import pytest
+from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.auth import get_current_user_id
 from app.main import app
+from app.services.storage import NoopStorageService
 
 DEFAULT_TEST_USER_ID = "test-user-1"
+
+
+@pytest.fixture(autouse=True)
+def noop_storage():
+    """Patch create_storage_service for every test so no test ever makes a
+    real R2 network call.  Tests that specifically exercise R2StorageService
+    instantiate it directly and mock boto3 themselves.
+    """
+    with patch("app.main.create_storage_service", return_value=NoopStorageService()):
+        yield
 
 
 @pytest.fixture()
