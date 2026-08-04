@@ -6,6 +6,7 @@ from uuid import uuid4
 
 import fitz
 from fastapi import APIRouter, Depends, File, Form, HTTPException, Request, UploadFile
+from fastapi.responses import Response
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 
@@ -226,6 +227,13 @@ async def upload_document(
         }
     )
 
+    # Persist the raw PDF in Cloudflare R2 so the citation viewer can fetch it
+    # via GET /api/v1/documents/{id}/file.  Non-fatal: failures are logged but
+    # the document remains searchable via Ahnlich.
+    storage = getattr(request.app.state, "storage", None)
+    if storage is not None:
+        await storage.upload_pdf(document_id, file_bytes)
+
     return DocumentUploadResponse(
         document_id=document_id,
         user_id=current_user_id,
@@ -265,8 +273,55 @@ async def delete_document(
     await vector_store.delete_document(document_id)
     deleted = await document_registry.delete_document(document_id)
 
+    # Also remove the raw PDF from R2 (best-effort; failure is non-fatal).
+    storage = getattr(request.app.state, "storage", None)
+    if storage is not None:
+        await storage.delete_pdf(document_id)
+
     return DocumentDeleteResponse(document_id=document_id, deleted=deleted)
 
+
+@router.get("/documents/{document_id}/file")
+async def get_document_file(
+    request: Request,
+    document_id: str,
+    current_user_id: str = Depends(get_current_user_id),
+) -> Response:
+    """Stream the raw PDF binary for a document from Cloudflare R2.
+
+    The frontend PDF viewer calls this endpoint (with the Clerk bearer token)
+    to render the document and deep-link to cited pages.
+    Returns 404 if the document does not belong to the caller or the PDF is
+    not yet stored in R2 (e.g. uploaded before R2 was configured).
+    """
+    document_registry = request.app.state.document_registry
+    existing = await document_registry.get_document(document_id)
+    # Same deliberate 404/403 conflation as DELETE - never confirm existence
+    # of another user's document to a potential attacker.
+    if existing is None or existing.get("user_id") != current_user_id:
+        raise HTTPException(status_code=404, detail=f"Document '{document_id}' was not found")
+
+    storage = getattr(request.app.state, "storage", None)
+    if storage is None:
+        raise HTTPException(status_code=503, detail="File storage service is unavailable")
+
+    pdf_bytes = await storage.get_pdf_bytes(document_id)
+    if pdf_bytes is None:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                "PDF file not found in storage. "
+                "The document may have been uploaded before file storage was configured."
+            ),
+        )
+
+    # Serve inline so the PDF viewer can render it directly in the browser.
+    doc_name = existing.get("document_name", f"{document_id}.pdf")
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'inline; filename="{doc_name}"'},
+    )
 
 @router.post("/search/strict", response_model=StrictSearchResponse)
 async def strict_search(
