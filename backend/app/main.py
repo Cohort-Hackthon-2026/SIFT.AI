@@ -1,6 +1,9 @@
 # app/main.py
+import os
 from contextlib import asynccontextmanager
+
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.audio import router as audio_router
 from app.api.routes.documents import router as documents_router
@@ -29,6 +32,25 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(title="SIFT.AI API", version="0.1.0", lifespan=lifespan)
+
+# The Vite dev server (frontend/) runs on a different origin than this API,
+# so the browser blocks every request unless CORS is explicitly allowed.
+# CORS_ALLOWED_ORIGINS is a comma-separated list; defaults cover the two
+# ports the frontend README/Dockerfile actually use.
+_default_origins = "http://localhost:5173,http://127.0.0.1:5173"
+allowed_origins = [
+    origin.strip()
+    for origin in os.getenv("CORS_ALLOWED_ORIGINS", _default_origins).split(",")
+    if origin.strip()
+]
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=allowed_origins,
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 app.include_router(health_router)
 app.include_router(documents_router)

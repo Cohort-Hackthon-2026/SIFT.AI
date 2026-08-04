@@ -52,6 +52,43 @@ local check, but document listings won't survive a restart).
 run the API outside Docker, set `REDIS_URL=redis://localhost:6379/0` (or leave it unset -
 caching is skipped, not required).
 
+### Auth (Clerk)
+
+Every `/api/v1/documents*` and `/api/v1/audio/transcribe` request now requires a valid Clerk
+session token. If you don't have a Clerk account/application yet:
+
+```bash
+export AUTH_ENABLED=false
+```
+
+This treats every request as a fixed `local-dev-user` - fine for smoke-testing the API alone,
+**but the moment there's a real frontend involved, do this properly instead**:
+
+1. Create a free Clerk account at clerk.com and create an application.
+2. In the Clerk Dashboard, go to Configure -> API Keys -> Advanced and copy:
+   - the **JWKS URL** -> `CLERK_JWKS_URL`
+   - the same domain without the `/.well-known/jwks.json` suffix -> `CLERK_ISSUER`
+3. Set `AUTH_ENABLED=true` (the default - you can omit it).
+
+```bash
+export CLERK_JWKS_URL="https://<your-instance>.clerk.accounts.dev/.well-known/jwks.json"
+export CLERK_ISSUER="https://<your-instance>.clerk.accounts.dev"
+```
+
+With `AUTH_ENABLED=true` and no valid `CLERK_JWKS_URL`/`CLERK_ISSUER` set, every request will
+correctly fail with `401` - that's the safe default (fail closed), not a bug.
+
+To test manually without a frontend yet, mint a session token from the Clerk Dashboard
+(Users -> pick a user -> "Impersonate user" gives you a working session in the browser you can
+pull a token from via `window.Clerk.session.getToken()` in devtools), then:
+
+```bash
+curl http://localhost:8000/api/v1/documents -H "Authorization: Bearer <token>"
+```
+
+See `../frontend/FRONTEND_INTEGRATION.md` for how the frontend attaches this token to every
+request once auth pages exist there.
+
 ### Copy `.env.example`
 
 The simplest way to set all of the above is:
