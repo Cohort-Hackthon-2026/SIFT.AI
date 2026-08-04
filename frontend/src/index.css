@@ -1,44 +1,149 @@
 @import "tailwindcss";
 
-:root {
-  --background: #F4F7FB;
-  --surface: #FFFFFF;
-
-  --primary: #3B5BDB;
-  --primary-hover: #2F4FC7;
-  --accent: #14B8A6;
-
-  --text: #182230;
-  --text-muted: #667085;
-
-  --border: #D9E2EC;
-}
-
-.dark {
-  --background: #0B1220;
-  --surface: #131D2F;
-
-  --primary: #5B8CFF;
-  --primary-hover: #7AA3FF;
-  --accent: #2DD4BF;
-
-  --text: #F8FAFC;
-  --text-muted: #A8B3C7;
-
-  --border: #22314B;
-}
-
 @theme {
   --color-background: var(--background);
   --color-surface: var(--surface);
 
   --color-primary: var(--primary);
   --color-primary-hover: var(--primary-hover);
+  --color-primaryHover: var(--primary-hover);
+  --color-primary-ring: var(--primary-ring);
   --color-accent: var(--accent);
 
   --color-text: var(--text);
   --color-text-muted: var(--text-muted);
+  --color-textMuted: var(--text-muted);
   --color-text-inverse: var(--text-inverse);
+  --color-textInverse: var(--text-inverse);
 
   --color-border: var(--border);
+  --color-overlay: var(--overlay);
+
+  --color-citation-bg: var(--citation-bg);
+  --color-citation-border: var(--citation-border);
+  --color-citation-text: var(--citation-text);
+
+  --color-error: var(--error);
+  --color-success: var(--success);
+  --color-warning: var(--warning);
+}
+
+html,
+body {
+  background-color: var(--background);
+  color: var(--text);
+}
+
+button,
+input,
+select,
+textarea {
+  font: inherit;
+}
+
+input,
+select,
+textarea {
+  background-color: var(--surface);
+  border-color: var(--border);
+  caret-color: var(--primary);
+  color: var(--text);
+}
+
+::placeholder {
+  color: var(--text-muted);
+  opacity: 1;
+}
+
+.auth-theme-scope {
+  color: var(--text);
+}
+
+.auth-theme-scope :where(
+  .cl-rootBox,
+  .cl-rootBox p,
+  .cl-rootBox span,
+  .cl-rootBox label,
+  .cl-rootBox h1,
+  .cl-rootBox h2,
+  .cl-rootBox h3,
+  .cl-rootBox button,
+  .cl-rootBox input,
+  .cl-rootBox select,
+  .cl-rootBox textarea,
+  .cl-rootBox small,
+  .cl-rootBox strong
+) {
+  color: var(--text) !important;
+}
+
+.auth-theme-scope :where(
+  .cl-rootBox a,
+  .cl-rootBox .cl-footerActionLink,
+  .cl-rootBox .cl-formFieldAction,
+  .cl-rootBox .cl-formResendCodeLink,
+  .cl-rootBox .cl-identityPreviewEditButton
+) {
+  color: var(--primary) !important;
+}
+
+.auth-theme-scope .cl-rootBox :where(.cl-formButtonPrimary) {
+  background-color: var(--primary) !important;
+  color: var(--text-inverse) !important;
+}
+
+.auth-theme-scope .cl-rootBox :where(.cl-formButtonPrimary span) {
+  color: var(--text-inverse) !important;
+}
+
+.auth-theme-scope .cl-rootBox :where(.cl-socialButtonsBlockButton) {
+  background-color: var(--surface) !important;
+  border-color: var(--border) !important;
+}
+
+.auth-theme-scope .cl-rootBox :where(.cl-formFieldInput) {
+  background-color: var(--background) !important;
+  border-color: var(--border) !important;
+  caret-color: var(--primary) !important;
+  color: var(--text) !important;
+  -webkit-text-fill-color: var(--text) !important;
+}
+
+.auth-theme-scope .cl-rootBox :where(.cl-formFieldErrorText) {
+  color: var(--error) !important;
+}
+
+.auth-theme-scope .cl-rootBox :where(
+  [data-otp-input],
+  .cl-otpCodeFieldInput,
+  [class*="otpCodeFieldInput"]
+) {
+  background-color: var(--background) !important;
+  border: 1px solid var(--border) !important;
+  box-shadow: inset 0 0 0 1px var(--border) !important;
+  caret-color: var(--primary) !important;
+  color: var(--text) !important;
+  -webkit-text-fill-color: var(--text) !important;
+}
+
+.auth-theme-scope .cl-rootBox :where(
+  [data-otp-input]:focus,
+  [data-otp-input]:focus-visible,
+  .cl-otpCodeFieldInput:focus,
+  .cl-otpCodeFieldInput:focus-visible,
+  [class*="otpCodeFieldInput"]:focus,
+  [class*="otpCodeFieldInput"]:focus-visible,
+  [class*="otpCodeFieldInput"][data-status="selected"],
+  [class*="otpCodeFieldInput"][aria-selected="true"]
+) {
+  border-color: var(--primary) !important;
+  box-shadow: 0 0 0 3px var(--primary-ring), inset 0 0 0 1px var(--primary) !important;
+  outline: none !important;
+}
+
+.auth-theme-scope .cl-rootBox [data-otp-input]::placeholder,
+.auth-theme-scope .cl-rootBox .cl-otpCodeFieldInput::placeholder,
+.auth-theme-scope .cl-rootBox [class*="otpCodeFieldInput"]::placeholder {
+  color: var(--text-muted) !important;
+  -webkit-text-fill-color: var(--text-muted) !important;
 }

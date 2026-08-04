@@ -20,7 +20,7 @@ function CitationDrawer() {
     if (!open) return null;
 
     return (
-        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 bg-overlay backdrop-blur-sm">
 
             <div className="absolute right-0 top-0 h-screen w-full max-w-lg border-l border-border bg-surface shadow-2xl">
 

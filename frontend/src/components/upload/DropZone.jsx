@@ -7,10 +7,14 @@ import { useUpload } from "../../../store/upload";
 function DropZone() {
   const addFiles = useUpload((state) => state.addFiles);
   const setDragging = useUpload((state) => state.setDragging);
+  const uploadFile = useUpload((state) => state.uploadFile);
 
   const onDrop = useCallback(
     (acceptedFiles) => {
       addFiles(acceptedFiles);
+      // start uploads for newly added files
+      const ids = useUpload.getState()._lastAddedIds || [];
+      ids.forEach((id) => uploadFile(id));
       setDragging(false);
     },
     [addFiles, setDragging]
