@@ -12,7 +12,7 @@ function MessageBubble({ message }) {
 
     return (
         <div
-            className={`flex gap-3 sm:gap-4 ${isUser ? "justify-end items-end" : "justify-start items-start"
+            className={`flex gap-3 sm:gap-4 ${isUser ? "justify-end" : "justify-start"
                 }`}
         >
             {!isUser && (

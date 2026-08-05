@@ -25,7 +25,6 @@ function MainLayout({ children }) {
                 <TopBar
                     sidebarOpen={sidebarOpen}
                     onToggleSidebar={() => setSidebarOpen((value) => !value)}
-                    onCloseSidebar={() => setSidebarOpen(false)}
                 />
 
                 <main className="mx-auto flex w-full max-w-7xl flex-1 flex-col px-3 py-4 sm:px-6 sm:py-6 lg:px-8 lg:py-8">

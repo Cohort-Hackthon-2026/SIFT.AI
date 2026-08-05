@@ -191,54 +191,6 @@ const chatStore = (set, get) => ({
       let assistantContent = "";
       let citations = [];
 
-      const processEventChunk = (chunk) => {
-        const eventLines = chunk.split(/\r?\n/);
-        let eventName = "message";
-        const dataLines = [];
-
-        for (const line of eventLines) {
-          if (line.startsWith("event:")) {
-            eventName = line.slice(6).trim();
-          } else if (line.startsWith("data:")) {
-            dataLines.push(line.slice(5));
-          }
-        }
-
-        const rawData = dataLines.join("\n").trim();
-        if (!rawData) {
-          return;
-        }
-
-        let payload;
-        try {
-          payload = JSON.parse(rawData);
-        } catch {
-          return;
-        }
-
-        if (eventName === "message") {
-          const delta = payload.delta || "";
-          assistantContent += delta;
-          set((state) => ({
-            messages: state.messages.map((message) =>
-              message.id === assistantMessage.id ? { ...message, content: assistantContent } : message
-            ),
-          }));
-        } else if (eventName === "metadata") {
-          citations = [
-            ...(payload.internal_citations || []),
-            ...(payload.external_citations || []),
-          ].map(normalizeCitation).filter(Boolean);
-          set((state) => ({
-            messages: state.messages.map((message) =>
-              message.id === assistantMessage.id ? { ...message, citations } : message
-            ),
-          }));
-        } else if (eventName === "status") {
-          set({ streamStatus: payload.step || "Thinking..." });
-        }
-      };
-
       while (true) {
         const { done, value } = await reader.read();
         if (done) {
@@ -246,20 +198,81 @@ const chatStore = (set, get) => ({
         }
 
         buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split(/\r?\n\r?\n/);
+        const parts = buffer.split("\n\n");
         buffer = parts.pop() || "";
 
         for (const part of parts) {
           if (!part.trim()) {
             continue;
           }
-          processEventChunk(part);
+
+          const lines = part.split("\n");
+          let eventName = "message";
+          let data = "";
+
+          for (const line of lines) {
+            if (line.startsWith("event:")) {
+              eventName = line.replace("event:", "").trim();
+            } else if (line.startsWith("data:")) {
+              data += line.replace("data:", "").trim();
+            }
+          }
+
+          if (!data) {
+            continue;
+          }
+
+          const payload = JSON.parse(data);
+
+          if (eventName === "message") {
+            const delta = payload.delta || "";
+            assistantContent += delta;
+            set((state) => ({
+              messages: state.messages.map((message) =>
+                message.id === assistantMessage.id ? { ...message, content: assistantContent } : message
+              ),
+            }));
+          } else if (eventName === "metadata") {
+            citations = [
+              ...(payload.internal_citations || []),
+              ...(payload.external_citations || []),
+            ].map(normalizeCitation).filter(Boolean);
+            set((state) => ({
+              messages: state.messages.map((message) =>
+                message.id === assistantMessage.id ? { ...message, citations } : message
+              ),
+            }));
+          } else if (eventName === "status") {
+            set({ streamStatus: payload.step || "Thinking..." });
+          }
         }
       }
 
       const tail = buffer.trim();
       if (tail) {
-        processEventChunk(tail);
+        const lines = tail.split("\n");
+        let eventName = "message";
+        let data = "";
+
+        for (const line of lines) {
+          if (line.startsWith("event:")) {
+            eventName = line.replace("event:", "").trim();
+          } else if (line.startsWith("data:")) {
+            data += line.replace("data:", "").trim();
+          }
+        }
+
+        if (data) {
+          const payload = JSON.parse(data);
+          if (eventName === "message") {
+            assistantContent += payload.delta || "";
+            set((state) => ({
+              messages: state.messages.map((message) =>
+                message.id === assistantMessage.id ? { ...message, content: assistantContent } : message
+              ),
+            }));
+          }
+        }
       }
 
       set({ streamStatus: "Done" });
@@ -270,20 +283,32 @@ const chatStore = (set, get) => ({
 
       return assistantMessage;
     } catch (err) {
+      // Format error message for display
       let errorMessage = err.message || "An error occurred";
-
+      
+      // Try to extract more detailed error information from API response
       if (err.detail) {
         if (typeof err.detail === "string") {
           errorMessage = err.detail;
         } else if (Array.isArray(err.detail)) {
+          // Handle validation errors from Pydantic
           errorMessage = err.detail
             .map((e) => e.msg || e.message || JSON.stringify(e))
             .join("; ");
         }
       }
 
+      // Update assistant message with error content
       set((state) => ({
-        messages: state.messages.filter((message) => message.id !== assistantMessage.id),
+        messages: state.messages.map((message) =>
+          message.id === assistantMessage.id
+            ? {
+                ...message,
+                content: `**Error:** "${errorMessage}".\n\nPlease try again or adjust your request.`,
+                error: true,
+              }
+            : message
+        ),
         error: errorMessage,
       }));
 

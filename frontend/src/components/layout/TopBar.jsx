@@ -1,4 +1,4 @@
-import { FileSearch2, PanelLeftOpen, PanelLeftClose } from "lucide-react";
+import { FileSearch2, PanelLeftOpen } from "lucide-react";
 
 import ThemeToggle from "../theme/ThemeToggle";
 import ModeDropdown from "../theme/ModeDropdown";
@@ -7,7 +7,7 @@ import Button from "../ui/Button";
 import { useAuth } from "@clerk/react";
 import { useAuth as useLocalAuth } from "../../../store/auth";
 
-function TopBar({ sidebarOpen, onToggleSidebar, onCloseSidebar }) {
+function TopBar({ sidebarOpen, onToggleSidebar }) {
   const { isLoaded, isSignedIn } = useAuth();
   const openWelcome = useLocalAuth((state) => state.openWelcome);
 
@@ -16,19 +16,17 @@ function TopBar({ sidebarOpen, onToggleSidebar, onCloseSidebar }) {
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-3 sm:px-6 lg:px-8">
         {/* Left side - Sidebar toggle at the edge */}
         <div className="flex items-center gap-4 sm:gap-6">
-          <button
-            type="button"
-            onClick={onToggleSidebar}
-            className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-background text-text transition-all duration-200 hover:bg-primary/10 hover:border-primary active:scale-95"
-            aria-label="Toggle sidebar"
-            title={sidebarOpen ? "Close sidebar" : "Open sidebar"}
-          >
-            {sidebarOpen ? (
-              <PanelLeftClose size={20} />
-            ) : (
+          {!sidebarOpen && (
+            <button
+              type="button"
+              onClick={onToggleSidebar}
+              className="flex h-10 w-10 items-center justify-center rounded-xl border border-border bg-background text-text transition-all duration-200 hover:bg-primary/10 hover:border-primary active:scale-95"
+              aria-label="Open sidebar"
+              title="Open sidebar"
+            >
               <PanelLeftOpen size={20} />
-            )}
-          </button>
+            </button>
+          )}
 
           {/* Logo and branding */}
           <div className="flex items-center gap-3">
