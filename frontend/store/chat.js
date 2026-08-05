@@ -2,6 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 import { api } from "../src/lib/api";
+import { streamChatQuery } from "../src/lib/sseClient";
 import { useDocuments } from "./documents";
 import { useSettings } from "./settings";
 
@@ -55,6 +56,7 @@ const chatStore = (set, get) => ({
   isSending: false,
   streamStatus: "",
   streamProgress: 0,
+  streamSteps: [],
   error: null,
 
   setInput: (input) => set({ input }),
@@ -170,34 +172,33 @@ const chatStore = (set, get) => ({
       input: "",
       isSending: true,
       error: null,
-      streamStatus: "Thinking...",
+      streamStatus: "",
       streamProgress: 0,
+      streamSteps: [],
     }));
 
     try {
       const mode = useSettings.getState().mode;
-      const response = await api.streamChat({
-        query: trimmed,
-        chat_id: chatId,
-        mode: (mode || "STRICT").toUpperCase(),
-        document_ids: documentIds,
-        top_k: 5,
-        min_score_threshold: 0.5,
-      });
-
       let assistantContent = "";
       let citations = [];
-      await api.readEventStream(response, ({ event, data: payload }) => {
-        if (!payload || typeof payload !== "object") return;
-
-        if (event === "message") {
-          assistantContent += payload.delta || "";
+      await streamChatQuery({
+        payload: {
+          query: trimmed,
+          chat_id: chatId,
+          mode: (mode || "STRICT").toUpperCase(),
+          document_ids: documentIds,
+          top_k: 5,
+          min_score_threshold: 0.5,
+        },
+        onToken: (delta) => {
+          assistantContent += delta;
           set((state) => ({
             messages: state.messages.map((message) =>
               message.id === assistantMessage.id ? { ...message, content: assistantContent } : message
             ),
           }));
-        } else if (event === "metadata") {
+        },
+        onMetadata: (payload) => {
           citations = [
             ...(payload.internal_citations || []),
             ...(payload.external_citations || []),
@@ -209,15 +210,18 @@ const chatStore = (set, get) => ({
                 : message
             ),
           }));
-        } else if (event === "status") {
-          set({
-            streamStatus: payload.step || "Thinking...",
-            streamProgress: Number.isFinite(payload.progress) ? payload.progress : 0,
-          });
-        }
+        },
+        onStatus: (payload) => {
+          if (!payload?.step) return;
+          set((state) => ({
+            streamStatus: payload.step,
+            streamProgress: Number.isFinite(payload.progress) ? payload.progress : state.streamProgress,
+            streamSteps: state.streamSteps.some((item) => item.step === payload.step)
+              ? state.streamSteps.map((item) => item.step === payload.step ? { ...item, progress: payload.progress } : item)
+              : [...state.streamSteps, { step: payload.step, progress: payload.progress }],
+          }));
+        },
       });
-
-      set({ streamStatus: "Done", streamProgress: 100 });
 
       if (!get().chats.some((chat) => chat.chat_id === chatId)) {
         await get().loadChats();

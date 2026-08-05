@@ -39,10 +39,12 @@
 
 - **Backend Base URL**: Default `http://localhost:8000` (Dev / Docker) or production deployment domain.
 - **Frontend Environment File (`frontend/.env`)**:
+
   ```env
   VITE_API_BASE_URL=http://localhost:8000
   VITE_CLERK_PUBLISHABLE_KEY=pk_test_...
   ```
+
 - **CORS**: Backend allows `http://localhost:5173` and `http://127.0.0.1:5173` by default.
 - **Authentication Header**: Every request (except `/health`) requires:
   `Authorization: Bearer <clerk_session_token>`
@@ -207,13 +209,14 @@ export async function fetchWithAuth(endpoint, options = {}, getToken) {
 ### 5.1 Document Management & Cloudflare R2 PDF Serving
 
 | Method & Route | Request Format | Response Format | Purpose |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `POST /api/v1/documents/upload` | `FormData`: `file`, `document_name` | `DocumentUploadResponse` | Upload PDF, extract chunks, push to Ahnlich vector DB, save PDF in R2, register in Postgres. |
 | `GET /api/v1/documents` | None | `{ documents: DocumentRecord[] }` | Fetch list of active PDFs uploaded by user. |
 | `DELETE /api/v1/documents/{doc_id}` | Path param `doc_id` | `{ document_id: string, deleted: boolean }` | Purge document from Ahnlich, R2, and Postgres. |
 | `GET /api/v1/documents/{doc_id}/file` | Path param `doc_id` | Binary stream (`application/pdf`) | Returns raw PDF bytes for split-screen PDF viewer. |
 
 #### React Example: Uploading a Document
+
 ```javascript
 export async function uploadPdf(file, getToken) {
   const formData = new FormData();
@@ -228,6 +231,7 @@ export async function uploadPdf(file, getToken) {
 ```
 
 #### React Example: Fetching PDF Binary for Viewer
+
 ```javascript
 export async function fetchPdfBlob(documentId, getToken) {
   const blob = await fetchWithAuth(`/api/v1/documents/${documentId}/file`, {
@@ -246,7 +250,7 @@ export async function fetchPdfBlob(documentId, getToken) {
 Chat sessions and historical threads are persisted in PostgreSQL.
 
 | Method & Route | Request Format | Response Format | Purpose |
-|---|---|---|---|
+| --- | --- | --- | --- |
 | `POST /api/v1/chats` | `{ title?, mode?, document_ids? }` | `ChatSession` | Create a new research chat thread. |
 | `GET /api/v1/chats` | None | `{ chats: ChatSession[] }` | List all user chat sessions (ordered by `updated_at`). |
 | `GET /api/v1/chats/{chat_id}` | Path param `chat_id` | `ChatSession` | Fetch single chat thread metadata. |
@@ -255,6 +259,7 @@ Chat sessions and historical threads are persisted in PostgreSQL.
 | `GET /api/v1/chats/{chat_id}/messages` | Path param `chat_id` | `{ messages: ChatMessage[] }` | Fetch full chronological message history. |
 
 #### React Example: Creating a Chat & Fetching History
+
 ```javascript
 // Create chat thread bound to 2 PDFs
 const chat = await fetchWithAuth("/api/v1/chats", {
@@ -278,7 +283,8 @@ console.log("Messages:", history.messages);
 
 Streams real-time tokens, status logs, citations, and conflict alerts over Server-Sent Events.
 
-#### Payload Schema:
+#### Payload Schema
+
 ```json
 {
   "query": "What is the penalty clause for early termination?",
@@ -293,7 +299,7 @@ Streams real-time tokens, status logs, citations, and conflict alerts over Serve
 > [!IMPORTANT]
 > When `chat_id` is included, the backend **automatically persists both the user query and the full assistant response + citation metadata** into PostgreSQL.
 
-#### Production SSE Stream Reader (`src/lib/sseClient.js`):
+#### Production SSE Stream Reader (`src/lib/sseClient.js`)
 
 ```javascript
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "http://localhost:8000";
@@ -396,18 +402,21 @@ export async function transcribeAudioBlob(audioBlob, getToken) {
 ## 6. UI Component & UX Guidelines
 
 ### 1. Citation Pill Rendering Rules
+
 - **Internal PDF Citations**: Render blue pill `📄 [Doc: Lease.pdf, Page: 4]`.
   - **Action**: Clicking pill opens `PdfViewerDrawer`, loads `GET /api/v1/documents/{doc_id}/file`, and scrolls to `page_number`.
 - **External Web Citations**: Render green/purple pill `🌐 [Web: supremecourt.gov.ng]`.
   - **Action**: Clicking pill opens URL in external tab.
 
 ### 2. Legal Conflict Warning Banner
+
 - If `metadata.conflict_alert` has `has_conflict: true`, display a high-visibility warning container above or below assistant message:
   - **Severity Badge**: Red (`HIGH`), Amber (`MEDIUM`), Blue (`LOW`).
   - **Contract Clause**: Highlight what the document stated.
   - **Legal Precedent**: Highlight what recent statute / web precedent overruled.
 
 ### 3. Fallback Response Assertion
+
 - If internal vector store returns low similarity chunks under `STRICT` mode, the backend returns:
   `"Information not found in the uploaded documents."`
 - Display this clearly without rendering blank citation pills.
@@ -417,7 +426,7 @@ export async function transcribeAudioBlob(audioBlob, getToken) {
 ## 7. Error Handling & Edge Cases Matrix
 
 | HTTP Status | Trigger Cause | Frontend Action |
-|---|---|---|
+| --- | --- | --- |
 | `401 Unauthorized` | Missing/Expired Clerk JWT | Redirect to Sign-In page (`/sign-in`). |
 | `404 Not Found` | Accessing document or chat belonging to another user | Display "Resource not found" (Security isolation). |
 | `400 Bad Request` | Empty query or malformed body | Show toast notification "Query cannot be empty". |
