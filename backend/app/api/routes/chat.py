@@ -1,10 +1,11 @@
 # app/api/routes/chat.py
 import json
 import logging
-from typing import List, Optional
+from typing import Any, List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Request, status
-from pydantic import BaseModel
+from pydantic import BaseModel, model_validator
 from sse_starlette.sse import EventSourceResponse
+
 
 from app.auth import get_current_user_id
 from app.services.agent_router import AgentRouterService
@@ -17,12 +18,23 @@ router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
 
 
 class ChatRequest(BaseModel):
+
     query: str
     chat_id: Optional[str] = None
     mode: str = "STRICT"  # "STRICT" or "ENHANCED"
     document_ids: Optional[List[str]] = None
     top_k: int = 5
     min_score_threshold: float = 0.5
+
+    @model_validator(mode="before")
+    @classmethod
+    def parse_stringified_json(cls, data: Any) -> Any:
+        if isinstance(data, str):
+            try:
+                return json.loads(data)
+            except Exception:
+                pass
+        return data
 
 
 @router.post("/stream")
