@@ -1,10 +1,12 @@
 # app/services/llm_synthesis.py
+import logging
 import os
 import re
 from typing import List, Dict, Any, AsyncGenerator, Optional
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
+logger = logging.getLogger(__name__)
 
 STRICT_MODE_SYSTEM_PROMPT = """You are SIFT.AI, a precision legal research assistant operating in STRICT MODE (Closed World).
 
@@ -41,7 +43,7 @@ LIVE WEB PRECEDENTS & SEARCH HIGHLIGHTS:
 class LLMSynthesisService:
     def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-1.5-pro")
+        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-1.5-flash")
         
         if self.api_key:
             self.llm = ChatGoogleGenerativeAI(
@@ -62,6 +64,33 @@ class LLMSynthesisService:
         # Strip raw URLs
         cleaned = re.sub(r'https?://\S+', '', cleaned)
         return cleaned.strip()
+
+    async def _stream_llm_with_fallback(self, messages: List[Any]) -> AsyncGenerator[str, None]:
+        """Internal helper to stream from main LLM model, with fallback to gemini-1.5-flash if needed."""
+        if not self.llm:
+            yield "LLM service unavailable: GEMINI_API_KEY is not configured."
+            return
+
+        try:
+            async for chunk in self.llm.astream(messages):
+                if chunk.content:
+                    yield str(chunk.content)
+        except Exception as exc:
+            logger.error(f"LLM streaming failed with model '{self.model_name}': {exc}. Attempting fallback...")
+            # Fallback to gemini-1.5-flash if the primary model failed (e.g. 404 model not found)
+            try:
+                fallback_llm = ChatGoogleGenerativeAI(
+                    model="gemini-1.5-flash",
+                    google_api_key=self.api_key,
+                    temperature=0.1,
+                    streaming=True,
+                )
+                async for chunk in fallback_llm.astream(messages):
+                    if chunk.content:
+                        yield str(chunk.content)
+            except Exception as fb_exc:
+                logger.error(f"Fallback LLM streaming also failed: {fb_exc}")
+                yield f"\n[LLM Streaming Error: {exc}]"
 
     async def stream_strict_synthesis(
         self,
@@ -87,13 +116,8 @@ class LLMSynthesisService:
         )
         human_msg = HumanMessage(content=query)
 
-        if not self.llm:
-            yield "LLM service unavailable: GEMINI_API_KEY is not configured."
-            return
-
-        async for chunk in self.llm.astream([system_msg, human_msg]):
-            if chunk.content:
-                yield str(chunk.content)
+        async for token in self._stream_llm_with_fallback([system_msg, human_msg]):
+            yield token
 
     async def stream_enhanced_synthesis(
         self,
@@ -126,10 +150,5 @@ class LLMSynthesisService:
         )
         human_msg = HumanMessage(content=query)
 
-        if not self.llm:
-            yield "LLM service unavailable: GEMINI_API_KEY is not configured."
-            return
-
-        async for chunk in self.llm.astream([system_msg, human_msg]):
-            if chunk.content:
-                yield str(chunk.content)
+        async for token in self._stream_llm_with_fallback([system_msg, human_msg]):
+            yield token

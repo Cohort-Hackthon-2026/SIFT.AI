@@ -216,19 +216,25 @@ async def chat_stream(
 
         full_assistant_response = []
 
-        if effective_mode == "STRICT":
-            async for token in llm_service.stream_strict_synthesis(payload.query, processed_chunks):
-                safe_token = llm_service.validate_strict_response(token)
-                if safe_token:
-                    full_assistant_response.append(safe_token)
-                    yield {"event": "message", "data": json.dumps({"delta": safe_token})}
-        else:
-            async for token in llm_service.stream_enhanced_synthesis(
-                payload.query, processed_chunks, external_snippets
-            ):
-                if token:
-                    full_assistant_response.append(token)
-                    yield {"event": "message", "data": json.dumps({"delta": token})}
+        try:
+            if effective_mode == "STRICT":
+                async for token in llm_service.stream_strict_synthesis(payload.query, processed_chunks):
+                    safe_token = llm_service.validate_strict_response(token)
+                    if safe_token:
+                        full_assistant_response.append(safe_token)
+                        yield {"event": "message", "data": json.dumps({"delta": safe_token})}
+            else:
+                async for token in llm_service.stream_enhanced_synthesis(
+                    payload.query, processed_chunks, external_snippets
+                ):
+                    if token:
+                        full_assistant_response.append(token)
+                        yield {"event": "message", "data": json.dumps({"delta": token})}
+        except Exception as err:
+            logger.error(f"Error during LLM streaming: {err}")
+            err_msg = f"\n[Streaming error: {err}]"
+            full_assistant_response.append(err_msg)
+            yield {"event": "message", "data": json.dumps({"delta": err_msg})}
 
         # Persist Assistant Response if chat_id is present
         if payload.chat_id and chat_registry:
