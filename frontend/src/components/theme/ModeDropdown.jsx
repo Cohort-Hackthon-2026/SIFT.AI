@@ -20,7 +20,7 @@ function ModeDropdown() {
                 onClick={() => setOpen(!open)}
                 className="flex h-11 items-center gap-2 rounded-xl border border-border bg-surface px-4 text-sm font-medium hover:bg-background"
             >
-                {current.label}
+                {current?.label}
 
                 <ChevronDown size={16} />
             </button>
