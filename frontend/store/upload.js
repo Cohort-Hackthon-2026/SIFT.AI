@@ -86,7 +86,7 @@ const uploadStore = (set, get) => ({
             const resp = await api.uploadDocument(form);
 
             // update file as completed
-            set((s) => ({ files: s.files.map((f) => (f.id === id ? { ...f, status: "completed", progress: 100, documentId: resp.document_id, pages: resp.page_count } : f)) }));
+            set((s) => ({ files: s.files.map((f) => (f.id === id ? { ...f, status: "completed", progress: 100, documentId: resp.document_id, pages: resp.pages?.length ?? 0 } : f)) }));
 
             // push into documents store
             const add = useDocuments.getState().addDocument;

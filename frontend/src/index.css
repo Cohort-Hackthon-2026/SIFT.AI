@@ -28,6 +28,19 @@
   --color-warning: var(--warning);
 }
 
+/* Responsive font sizes */
+html {
+  font-size: 14px;
+  
+  @media (min-width: 640px) {
+    font-size: 15px;
+  }
+  
+  @media (min-width: 768px) {
+    font-size: 16px;
+  }
+}
+
 html,
 body {
   background-color: var(--background);
@@ -146,4 +159,34 @@ textarea {
 .auth-theme-scope .cl-rootBox [class*="otpCodeFieldInput"]::placeholder {
   color: var(--text-muted) !important;
   -webkit-text-fill-color: var(--text-muted) !important;
+}
+
+@keyframes slideIn {
+  from {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+@keyframes slideOut {
+  from {
+    opacity: 1;
+    transform: translateX(0);
+  }
+  to {
+    opacity: 0;
+    transform: translateX(100%);
+  }
+}
+
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}
+
+.animate-slide-out {
+  animation: slideOut 0.3s ease-in;
 }

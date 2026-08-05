@@ -13,6 +13,7 @@ import NotFound from "./Pages/NotFound";
 
 import AuthModal from "./components/auth/AuthModal";
 import AuthBridge from "./components/auth/AuthBridge";
+import ToastContainer from "./components/ui/ToastContainer";
 
 function App() {
   const theme = useTheme((state) => state.theme);
@@ -45,6 +46,8 @@ function App() {
 
   return (
     <>
+      <ToastContainer />
+
       {(!isSignedIn && welcomeVisible) && (
         <AuthModal
           onClose={closeWelcome}

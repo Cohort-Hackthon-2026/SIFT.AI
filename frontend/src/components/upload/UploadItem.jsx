@@ -3,9 +3,11 @@ import {
   Trash2,
   CheckCircle2,
   LoaderCircle,
+  Upload,
 } from "lucide-react";
 
 import ProgressBar from "./ProgressBar";
+import Badge from "../ui/Badge";
 import { useUpload } from "../../../store/upload";
 
 function UploadItem({
@@ -13,6 +15,9 @@ function UploadItem({
 }) {
   const removeFile = useUpload(
     (state) => state.removeFile
+  );
+  const uploadFile = useUpload(
+    (state) => state.uploadFile
   );
 
   const formatSize = (bytes) => {
@@ -28,112 +33,86 @@ function UploadItem({
     ).toFixed(2)} MB`;
   };
 
+  const statusConfig = {
+    selected: {
+      badge: "neutral",
+      label: "Ready to upload",
+      icon: <Upload size={14} />,
+    },
+    processing: {
+      badge: "warning",
+      label: "Uploading...",
+      icon: <LoaderCircle size={14} className="animate-spin" />,
+    },
+    completed: {
+      badge: "success",
+      label: "Ready",
+      icon: <CheckCircle2 size={14} />,
+    },
+    error: {
+      badge: "error",
+      label: "Failed",
+      icon: null,
+    },
+  };
+
+  const currentStatus = statusConfig[file.status] || statusConfig.selected;
+
   return (
-    <div className="rounded-2xl border border-border bg-surface p-4">
-
-      <div className="flex items-start justify-between">
-
-        <div className="flex gap-3">
-
-          <div className="flex h-12 w-12 items-center justify-center rounded-xl bg-primary/10">
-
+    <div className="rounded-2xl border border-border bg-surface p-4 transition-all hover:border-primary/30">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex gap-3 flex-1 min-w-0">
+          <div className="flex h-12 w-12 flex-shrink-0 items-center justify-center rounded-xl bg-primary/10">
             <FileText
               size={22}
               className="text-primary"
             />
-
           </div>
 
-          <div>
-
-            <h3 className="line-clamp-1 font-medium">
-
+          <div className="min-w-0 flex-1">
+            <h3 className="line-clamp-1 font-medium text-text">
               {file.name}
-
             </h3>
 
-            <p className="mt-1 text-sm text-textMuted">
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <p className="text-xs text-textMuted">
+                {formatSize(file.size)}
+              </p>
 
-              {formatSize(file.size)}
-
-            </p>
-
+              {file.pages && (
+                <span className="text-xs text-textMuted">
+                  • {file.pages} page{file.pages !== 1 ? "s" : ""}
+                </span>
+              )}
+            </div>
           </div>
-
         </div>
 
         <button
-          onClick={() =>
-            removeFile(file.id)
-          }
-          className="rounded-lg p-2 text-textMuted transition hover:bg-background hover:text-error"
+          onClick={() => removeFile(file.id)}
+          className="flex-shrink-0 rounded-lg p-2 text-textMuted transition hover:bg-background hover:text-error"
+          title="Remove file"
         >
           <Trash2 size={18} />
         </button>
-
       </div>
 
-      {/* <div className="mt-5">
-
-        <ProgressBar
-          value={file.progress}
-        />
-
-      </div> */}
+      {file.status === "processing" && (
+        <div className="mt-4">
+          <ProgressBar value={file.progress || 0} />
+        </div>
+      )}
 
       <div className="mt-4 flex items-center justify-between">
+        <Badge variant={currentStatus.badge} className="inline-flex items-center gap-1.5">
+          {currentStatus.icon}
+          {currentStatus.label}
+        </Badge>
 
-        <span className="rounded-full bg-primary/10 px-3 py-1 text-xs font-medium text-primary">
-          Selected
-        </span>
-
-        <span className="text-sm text-textMuted">
-          {formatSize(file.size)}
-        </span>
-
-      </div>
-
-      <div className="mt-3 flex items-center justify-between text-sm">
-
-        <span className="text-textMuted">
-
-          {file.progress}%
-
-        </span>
-
-        {file.status ===
-          "processing" ? (
-          <div className="flex items-center gap-2 text-primary">
-
-            <LoaderCircle
-              size={15}
-              className="animate-spin"
-            />
-
-            Processing...
-
-          </div>
-        ) : file.status ===
-          "completed" ? (
-          <div className="flex items-center gap-2 text-primary">
-
-            <CheckCircle2
-              size={15}
-            />
-
-            Ready
-
-          </div>
-        ) : (
-          <span className="text-textMuted">
-
-            Waiting
-
-          </span>
+        {file.error && (
+          <span className="text-xs text-error font-medium">{file.error}</span>
         )}
-
       </div>
-
     </div>
   );
 }

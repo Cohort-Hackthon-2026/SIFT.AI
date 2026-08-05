@@ -2,7 +2,7 @@ import { create } from "zustand";
 import { persist } from "zustand/middleware";
 
 const settingsStore = (set) => ({
-  mode: "strict",
+  mode: "",
 
   setMode: (mode) =>
     set({

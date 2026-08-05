@@ -6,7 +6,7 @@ function MessageList() {
   const messages = useChat((state) => state.messages);
 
   return (
-    <div className="space-y-8 py-6">
+    <div className="space-y-4 sm:space-y-6 py-4 sm:py-6">
       {messages.map((message) => (
         <MessageBubble
           key={message.id}
