@@ -17,7 +17,7 @@ function DropZone() {
       ids.forEach((id) => uploadFile(id));
       setDragging(false);
     },
-    [addFiles, setDragging]
+    [addFiles, setDragging, uploadFile]
   );
 
   const {

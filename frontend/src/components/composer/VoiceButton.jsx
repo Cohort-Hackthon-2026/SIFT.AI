@@ -1,30 +1,26 @@
-import { Mic, MicOff } from "lucide-react";
+import { Mic } from "lucide-react";
 import IconButton from "../ui/IconButton";
 import useSpeechRecognition from "../../../utils/UseSpeechRecognition";
+import VoiceModal from "../chat/VoiceModal";
 
 function VoiceButton() {
     const {
-        listening,
+        status,
+        transcript,
+        error,
         start,
         stop,
+        reset,
         supported,
     } = useSpeechRecognition();
 
     if (!supported) return null;
 
     return (
-        <IconButton
-            icon={listening ? MicOff : Mic}
-            onClick={
-                listening ? stop : start
-            }
-            className={
-                listening
-                    ? "bg-primary text-textInverse border-primary"
-                    : ""
-            }
-            title="Voice Input"
-        />
+        <>
+            <IconButton icon={Mic} onClick={start} title="Voice input" aria-label="Voice input" />
+            <VoiceModal status={status} transcript={transcript} error={error} onStop={stop} onClose={reset} />
+        </>
     );
 }
 

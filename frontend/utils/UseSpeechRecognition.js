@@ -1,20 +1,26 @@
 import { useEffect, useRef, useState } from "react";
 import { useChat } from "../store/chat";
+import { api } from "../src/lib/api";
 
 export default function useSpeechRecognition() {
     const setInput = useChat((s) => s.setInput);
 
     const recognitionRef = useRef(null);
-
-    const [listening, setListening] =
-        useState(false);
+    const recorderRef = useRef(null);
+    const streamRef = useRef(null);
+    const chunksRef = useRef([]);
+    const [status, setStatus] = useState("idle");
+    const [transcript, setTranscript] = useState("");
+    const [error, setError] = useState("");
+    const hasNativeRecognition = typeof window !== "undefined" && !!(window.SpeechRecognition || window.webkitSpeechRecognition);
+    const hasRecorder = typeof navigator !== "undefined" && !!navigator.mediaDevices?.getUserMedia && typeof MediaRecorder !== "undefined";
 
     useEffect(() => {
         const SpeechRecognition =
             window.SpeechRecognition ||
             window.webkitSpeechRecognition;
 
-        if (!SpeechRecognition) return;
+        if (!SpeechRecognition) return undefined;
 
         const recognition =
             new SpeechRecognition();
@@ -23,17 +29,19 @@ export default function useSpeechRecognition() {
         recognition.interimResults = true;
         recognition.lang = "en-US";
 
-        recognition.onstart = () =>
-            setListening(true);
+        recognition.onstart = () => setStatus("listening");
 
-        recognition.onend = () =>
-            setListening(false);
+        recognition.onend = () => setStatus((current) => current === "error" ? current : "idle");
+        recognition.onerror = (event) => {
+            setError(event.error === "not-allowed" ? "Microphone permission was denied." : "Speech recognition could not continue.");
+            setStatus("error");
+        };
 
         recognition.onresult = (event) => {
             let transcript = "";
 
             for (
-                let i = event.resultIndex;
+                let i = 0;
                 i < event.results.length;
                 i++
             ) {
@@ -41,26 +49,85 @@ export default function useSpeechRecognition() {
                     event.results[i][0].transcript;
             }
 
+            setTranscript(transcript);
             setInput(transcript);
         };
 
         recognitionRef.current = recognition;
+        return () => recognition.abort();
     }, [setInput]);
 
-    const start = () =>
-        recognitionRef.current?.start();
+    const start = async () => {
+        setError("");
+        setTranscript("");
 
-    const stop = () =>
-        recognitionRef.current?.stop();
+        if (recognitionRef.current) {
+            try {
+                recognitionRef.current.start();
+            } catch {
+                // Ignore repeated starts while the recognition service is active.
+            }
+            return;
+        }
+
+        try {
+            const mediaStream = await navigator.mediaDevices.getUserMedia({ audio: true });
+            streamRef.current = mediaStream;
+            chunksRef.current = [];
+            const recorder = new MediaRecorder(mediaStream);
+            recorderRef.current = recorder;
+            recorder.ondataavailable = (event) => {
+                if (event.data.size) chunksRef.current.push(event.data);
+            };
+            recorder.onstop = async () => {
+                setStatus("transcribing");
+                mediaStream.getTracks().forEach((track) => track.stop());
+                try {
+                    const blob = new Blob(chunksRef.current, { type: recorder.mimeType || "audio/webm" });
+                    const formData = new FormData();
+                    formData.append("file", blob, "voice-input.webm");
+                    const result = await api.transcribeAudio(formData, "en");
+                    const text = result?.text?.trim() || "";
+                    setTranscript(text);
+                    setInput(text);
+                    setStatus("idle");
+                } catch (err) {
+                    setError(err.message || "The recording could not be transcribed.");
+                    setStatus("error");
+                }
+            };
+            recorder.start();
+            setStatus("listening");
+        } catch (err) {
+            setError(err.name === "NotAllowedError" ? "Microphone permission was denied." : "The microphone could not be started.");
+            setStatus("error");
+        }
+    };
+
+    const stop = () => {
+        if (recognitionRef.current && status === "listening") {
+            recognitionRef.current.stop();
+        } else if (recorderRef.current?.state === "recording") {
+            recorderRef.current.stop();
+        }
+    };
+
+    const reset = () => {
+        recognitionRef.current?.abort();
+        if (recorderRef.current?.state === "recording") recorderRef.current.stop();
+        streamRef.current?.getTracks().forEach((track) => track.stop());
+        setStatus("idle");
+        setError("");
+    };
 
     return {
-        listening,
+        status,
+        listening: status === "listening",
+        transcript,
+        error,
         start,
         stop,
-        supported:
-            !!(
-                window.SpeechRecognition ||
-                window.webkitSpeechRecognition
-            ),
+        reset,
+        supported: hasNativeRecognition || hasRecorder,
     };
 }

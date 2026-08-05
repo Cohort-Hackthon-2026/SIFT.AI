@@ -1,4 +1,4 @@
-import { useRef, useEffect, useState } from "react";
+import { useRef, useState } from "react";
 
 import ActionBar from "./ActionBar";
 import FileChip from "./FileChip";

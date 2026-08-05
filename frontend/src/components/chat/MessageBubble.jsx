@@ -43,6 +43,17 @@ function MessageBubble({ message }) {
                             {message.content}
                         </MarkdownRenderer>
 
+                        {message.conflictAlert?.has_conflict && (
+                            <div className="mt-4 rounded-lg border border-warning/40 bg-warning/10 p-3 text-sm text-text">
+                                <p className="font-semibold text-warning">
+                                    {message.conflictAlert.severity || "Potential"} legal conflict
+                                </p>
+                                <p className="mt-1 text-textMuted">
+                                    {message.conflictAlert.explanation || message.conflictAlert.legal_precedent}
+                                </p>
+                            </div>
+                        )}
+
                         {!isUser && (
                             <>
                                 <div className="mt-4 sm:mt-5 flex flex-wrap gap-2">
@@ -60,7 +71,7 @@ function MessageBubble({ message }) {
                                     <IconButton icon={Volume2} />
                                 </div> */}
 
-                                <ChatActions />
+                                <ChatActions text={message.content} />
                             </>
                         )}
                     </>

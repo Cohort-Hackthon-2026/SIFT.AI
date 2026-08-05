@@ -41,6 +41,8 @@ const normalizeMessage = (message) => ({
     ...(message.metadata?.internal_citations || []),
     ...(message.metadata?.external_citations || []),
   ].map(normalizeCitation).filter(Boolean),
+  conflictAlert: message.metadata?.conflict_alert || null,
+  mode: message.metadata?.mode,
   createdAt: message.created_at,
 });
 
@@ -52,6 +54,7 @@ const chatStore = (set, get) => ({
   isLoadingChats: false,
   isSending: false,
   streamStatus: "",
+  streamProgress: 0,
   error: null,
 
   setInput: (input) => set({ input }),
@@ -168,6 +171,7 @@ const chatStore = (set, get) => ({
       isSending: true,
       error: null,
       streamStatus: "Thinking...",
+      streamProgress: 0,
     }));
 
     try {
@@ -181,101 +185,39 @@ const chatStore = (set, get) => ({
         min_score_threshold: 0.5,
       });
 
-      const reader = response.body?.getReader();
-      if (!reader) {
-        throw new Error("The chat stream is unavailable.");
-      }
-
-      const decoder = new TextDecoder();
-      let buffer = "";
       let assistantContent = "";
       let citations = [];
+      await api.readEventStream(response, ({ event, data: payload }) => {
+        if (!payload || typeof payload !== "object") return;
 
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) {
-          break;
+        if (event === "message") {
+          assistantContent += payload.delta || "";
+          set((state) => ({
+            messages: state.messages.map((message) =>
+              message.id === assistantMessage.id ? { ...message, content: assistantContent } : message
+            ),
+          }));
+        } else if (event === "metadata") {
+          citations = [
+            ...(payload.internal_citations || []),
+            ...(payload.external_citations || []),
+          ].map(normalizeCitation).filter(Boolean);
+          set((state) => ({
+            messages: state.messages.map((message) =>
+              message.id === assistantMessage.id
+                ? { ...message, citations, conflictAlert: payload.conflict_alert || null, mode: payload.mode }
+                : message
+            ),
+          }));
+        } else if (event === "status") {
+          set({
+            streamStatus: payload.step || "Thinking...",
+            streamProgress: Number.isFinite(payload.progress) ? payload.progress : 0,
+          });
         }
+      });
 
-        buffer += decoder.decode(value, { stream: true });
-        const parts = buffer.split("\n\n");
-        buffer = parts.pop() || "";
-
-        for (const part of parts) {
-          if (!part.trim()) {
-            continue;
-          }
-
-          const lines = part.split("\n");
-          let eventName = "message";
-          let data = "";
-
-          for (const line of lines) {
-            if (line.startsWith("event:")) {
-              eventName = line.replace("event:", "").trim();
-            } else if (line.startsWith("data:")) {
-              data += line.replace("data:", "").trim();
-            }
-          }
-
-          if (!data) {
-            continue;
-          }
-
-          const payload = JSON.parse(data);
-
-          if (eventName === "message") {
-            const delta = payload.delta || "";
-            assistantContent += delta;
-            set((state) => ({
-              messages: state.messages.map((message) =>
-                message.id === assistantMessage.id ? { ...message, content: assistantContent } : message
-              ),
-            }));
-          } else if (eventName === "metadata") {
-            citations = [
-              ...(payload.internal_citations || []),
-              ...(payload.external_citations || []),
-            ].map(normalizeCitation).filter(Boolean);
-            set((state) => ({
-              messages: state.messages.map((message) =>
-                message.id === assistantMessage.id ? { ...message, citations } : message
-              ),
-            }));
-          } else if (eventName === "status") {
-            set({ streamStatus: payload.step || "Thinking..." });
-          }
-        }
-      }
-
-      const tail = buffer.trim();
-      if (tail) {
-        const lines = tail.split("\n");
-        let eventName = "message";
-        let data = "";
-
-        for (const line of lines) {
-          if (line.startsWith("event:")) {
-            eventName = line.replace("event:", "").trim();
-          } else if (line.startsWith("data:")) {
-            data += line.replace("data:", "").trim();
-          }
-        }
-
-        if (data) {
-          const payload = JSON.parse(data);
-          if (eventName === "message") {
-            assistantContent += payload.delta || "";
-            set((state) => ({
-              messages: state.messages.map((message) =>
-                message.id === assistantMessage.id ? { ...message, content: assistantContent } : message
-              ),
-            }));
-          }
-        }
-      }
-
-      set({ streamStatus: "Done" });
+      set({ streamStatus: "Done", streamProgress: 100 });
 
       if (!get().chats.some((chat) => chat.chat_id === chatId)) {
         await get().loadChats();

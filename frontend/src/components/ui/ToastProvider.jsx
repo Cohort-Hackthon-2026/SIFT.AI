@@ -32,22 +32,4 @@ function ToastProvider() {
   );
 }
 
-// Global toast context
-let globalToastFn = null;
-
-export function useToast() {
-  const [id] = useState(() => crypto.randomUUID());
-
-  return useCallback(
-    (message, type = "info", duration = 3000) => {
-      // This is a simple implementation that will work with our Toast component
-      const event = new CustomEvent("add-toast", {
-        detail: { message, type, duration },
-      });
-      window.dispatchEvent(event);
-    },
-    []
-  );
-}
-
 export default ToastProvider;

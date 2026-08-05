@@ -16,10 +16,6 @@ function UploadItem({
   const removeFile = useUpload(
     (state) => state.removeFile
   );
-  const uploadFile = useUpload(
-    (state) => state.uploadFile
-  );
-
   const formatSize = (bytes) => {
     if (bytes < 1024)
       return `${bytes} B`;
