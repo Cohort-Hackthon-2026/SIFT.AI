@@ -19,7 +19,28 @@ class AgentRouterService:
             )
         else:
             self.llm = None
-
+    async def _invoke_with_fallback(self, messages: List[Any]) -> Any:
+        if not self.llm:
+            raise RuntimeError("LLM is not initialized")
+        
+        try:
+            return await self.llm.ainvoke(messages)
+        except Exception as exc:
+            # Cycle through candidate fallback models until one succeeds
+            fallback_models = ["gemini-3.6-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+            for fb_model in fallback_models:
+                if fb_model == self.model_name:
+                    continue
+                try:
+                    fallback_llm = ChatGoogleGenerativeAI(
+                        model=fb_model,
+                        google_api_key=self.api_key,
+                        temperature=0.0,
+                    )
+                    return await fallback_llm.ainvoke(messages)
+                except Exception:
+                    pass
+            raise exc
     async def reformulate_query(
         self,
         user_query: str,
@@ -46,7 +67,7 @@ class AgentRouterService:
         user_content = f"User Query: {user_query}\nContext Snippets: {context_summary.strip()}"
 
         try:
-            response = await self.llm.ainvoke([
+            response = await self._invoke_with_fallback([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_content)
             ])
@@ -89,7 +110,7 @@ If NO conflict or contradiction exists, return ONLY:
         user_content = f"INTERNAL CLAUSES:\n{formatted_internal}\n\nEXTERNAL RULINGS:\n{formatted_external}"
 
         try:
-            response = await self.llm.ainvoke([
+            response = await self._invoke_with_fallback([
                 SystemMessage(content=system_prompt),
                 HumanMessage(content=user_content)
             ])

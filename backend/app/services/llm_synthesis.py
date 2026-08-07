@@ -66,7 +66,7 @@ class LLMSynthesisService:
         return cleaned.strip()
 
     async def _stream_llm_with_fallback(self, messages: List[Any]) -> AsyncGenerator[str, None]:
-        """Internal helper to stream from main LLM model, with fallback to gemini-1.5-flash if needed."""
+        """Internal helper to stream from main LLM model, with fallback to stable models if needed."""
         if not self.llm:
             yield "LLM service unavailable: GEMINI_API_KEY is not configured."
             return
@@ -77,20 +77,31 @@ class LLMSynthesisService:
                     yield str(chunk.content)
         except Exception as exc:
             logger.error(f"LLM streaming failed with model '{self.model_name}': {exc}. Attempting fallback...")
-            # Fallback to gemini-1.5-flash as a known-stable model
-            fallback_model = "gemini-1.5-flash"
-            try:
-                fallback_llm = ChatGoogleGenerativeAI(
-                    model=fallback_model,
-                    google_api_key=self.api_key,
-                    temperature=0.1,
-                    streaming=True,
-                )
-                async for chunk in fallback_llm.astream(messages):
-                    if chunk.content:
-                        yield str(chunk.content)
-            except Exception as fb_exc:
-                logger.error(f"Fallback LLM streaming also failed: {fb_exc}")
+            # Cycle through candidate fallback models until one succeeds
+            fallback_models = ["gemini-3.6-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
+            success = False
+            for fb_model in fallback_models:
+                if fb_model == self.model_name:
+                    continue
+                try:
+                    logger.info(f"Trying fallback model '{fb_model}'...")
+                    fallback_llm = ChatGoogleGenerativeAI(
+                        model=fb_model,
+                        google_api_key=self.api_key,
+                        temperature=0.1,
+                        streaming=True,
+                    )
+                    # Force evaluation of at least one chunk to verify availability
+                    async for chunk in fallback_llm.astream(messages):
+                        if chunk.content:
+                            yield str(chunk.content)
+                    success = True
+                    break
+                except Exception as fb_exc:
+                    logger.warning(f"Fallback model '{fb_model}' failed: {fb_exc}")
+            
+            if not success:
+                logger.error("All fallback models failed.")
                 yield f"\n[LLM Streaming Error: {exc}]"
 
     async def stream_strict_synthesis(
