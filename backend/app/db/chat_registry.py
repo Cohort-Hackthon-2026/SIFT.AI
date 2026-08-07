@@ -172,8 +172,22 @@ class PostgresChatRegistry:
     async def _get_pool(self):
         if self._pool is None:
             import asyncpg
+            from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
-            self._pool = await asyncpg.create_pool(self._database_url)
+            # asyncpg doesn't understand channel_binding=require or sslmode=require
+            # query params — it uses native ssl kwarg instead. Strip them out and
+            # pass ssl="require" directly so Neon Postgres connections work.
+            parsed = urlparse(self._database_url)
+            params = parse_qs(parsed.query, keep_blank_values=True)
+            # Collect SSL mode before stripping
+            ssl_mode = params.pop("sslmode", [None])[0]
+            # asyncpg has no concept of channel_binding — remove it silently
+            params.pop("channel_binding", None)
+            clean_query = urlencode({k: v[0] for k, v in params.items()})
+            clean_url = urlunparse(parsed._replace(query=clean_query))
+
+            ssl_arg = "require" if ssl_mode == "require" else None
+            self._pool = await asyncpg.create_pool(clean_url, ssl=ssl_arg)
         return self._pool
 
     async def initialize(self) -> None:

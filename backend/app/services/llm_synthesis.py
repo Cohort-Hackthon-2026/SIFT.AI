@@ -77,10 +77,11 @@ class LLMSynthesisService:
                     yield str(chunk.content)
         except Exception as exc:
             logger.error(f"LLM streaming failed with model '{self.model_name}': {exc}. Attempting fallback...")
-            # Fallback to gemini-1.5-flash if the primary model failed (e.g. 404 model not found)
+            # Fallback to gemini-1.5-flash as a known-stable model
+            fallback_model = "gemini-1.5-flash"
             try:
                 fallback_llm = ChatGoogleGenerativeAI(
-                    model="gemini-1.5-flash",
+                    model=fallback_model,
                     google_api_key=self.api_key,
                     temperature=0.1,
                     streaming=True,
