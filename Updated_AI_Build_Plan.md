@@ -96,7 +96,10 @@
     - [ ] Live Web snippets (labeled as EXTERNAL_SOURCE).
   - [ ] Command the LLM to synthesize both sources into a unified response, forcing it to label claims with respective source indicators:
     - [ ] [Doc: {filename}, Page: {page}] for internal PDF facts.
-    - [ ] [Web: {domain_name}] ({url}) for web search facts.
+- [x] **Step 6: Chat Session & Message Persistence (PostgreSQL / Neon)**
+  - [x] Create `app/db/chat_registry.py` managing `chats` and `messages` tables with Postgres and InMemory fallbacks.
+  - [x] Create REST CRUD routes in `app/api/routes/chats.py` (`POST`, `GET`, `PATCH`, `DELETE /api/v1/chats` and `GET /api/v1/chats/{id}/messages`).
+  - [x] Auto-persist user prompt and streamed assistant response + citation metadata during SSE streaming when `chat_id` is supplied.
 
 - [ ] **Step 5: Server-Sent Events (SSE) & Security Guardrails**
   - [ ] Refactor response generation into a Python async generator using sse-starlette to stream tokens to the frontend in real time.
