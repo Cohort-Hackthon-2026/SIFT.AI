@@ -218,8 +218,9 @@ class AhnlichVectorStoreService:
         try:
             async with Channel(host=host, port=port) as channel:
                 client = AiServiceStub(channel)
-                # Timeout after 3 seconds if Ahnlich container is initializing models
-                response = await asyncio.wait_for(client.list_stores(ai_query.ListStores()), timeout=3.0)
+                # Timeout after 10 seconds — ahnlich runs via QEMU emulation on
+                # Apple Silicon which adds startup latency beyond the old 3s budget.
+                response = await asyncio.wait_for(client.list_stores(ai_query.ListStores()), timeout=10.0)
                 existing_stores = {store.name for store in response.stores}
 
                 if self._store_name not in existing_stores:
@@ -234,7 +235,7 @@ class AhnlichVectorStoreService:
                                 store_original=True,
                             )
                         ),
-                        timeout=5.0
+                        timeout=15.0
                     )
                 self._clear_last_error()
         except Exception as exc:
@@ -269,12 +270,15 @@ class AhnlichVectorStoreService:
                         )
                     )
 
-                await client.set(
-                    ai_query.Set(
-                        store=self._store_name,
-                        inputs=inputs,
-                        preprocess_action=PreprocessAction.ModelPreprocessing,
-                    )
+                await asyncio.wait_for(
+                    client.set(
+                        ai_query.Set(
+                            store=self._store_name,
+                            inputs=inputs,
+                            preprocess_action=PreprocessAction.ModelPreprocessing,
+                        )
+                    ),
+                    timeout=10.0
                 )
                 self._clear_last_error()
         except Exception as exc:
@@ -298,15 +302,18 @@ class AhnlichVectorStoreService:
         try:
             async with Channel(host=host, port=port) as channel:
                 client = AiServiceStub(channel)
-                response = await client.get_sim_n(
-                    ai_query.GetSimN(
-                        store=self._store_name,
-                        search_input=keyval.StoreInput(raw_string=query),
-                        closest_n=top_k,
-                        algorithm=Algorithm.CosineSimilarity,
-                        preprocess_action=PreprocessAction.ModelPreprocessing,
-                        condition=condition,
-                    )
+                response = await asyncio.wait_for(
+                    client.get_sim_n(
+                        ai_query.GetSimN(
+                            store=self._store_name,
+                            search_input=keyval.StoreInput(raw_string=query),
+                            closest_n=top_k,
+                            algorithm=Algorithm.CosineSimilarity,
+                            preprocess_action=PreprocessAction.ModelPreprocessing,
+                            condition=condition,
+                        )
+                    ),
+                    timeout=5.0
                 )
                 self._clear_last_error()
 
@@ -351,7 +358,10 @@ class AhnlichVectorStoreService:
                 client = AiServiceStub(channel)
                 # del_pred deletes every entry matching the predicate in a
                 # single round trip - no need to get_pred + del_key.
-                await client.del_pred(ai_query.DelPred(store=self._store_name, condition=condition))
+                await asyncio.wait_for(
+                    client.del_pred(ai_query.DelPred(store=self._store_name, condition=condition)),
+                    timeout=5.0
+                )
                 self._clear_last_error()
         except Exception as exc:
             self._set_last_error(exc)

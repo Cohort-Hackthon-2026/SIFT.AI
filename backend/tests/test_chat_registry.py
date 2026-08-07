@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import pytest
+from urllib.parse import urlparse, parse_qs
 
 from app.db.chat_registry import InMemoryChatRegistry
 
@@ -84,3 +85,49 @@ async def test_inmemory_chat_crud() -> None:
     assert deleted is True
     assert await registry.get_chat(chat["chat_id"]) is None
     assert len(await registry.list_messages(chat["chat_id"])) == 0
+
+
+def _strip_neon_url_params(database_url: str):
+    """Helper that replicates the URL stripping logic from PostgresChatRegistry._get_pool."""
+    from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
+    parsed = urlparse(database_url)
+    params = parse_qs(parsed.query, keep_blank_values=True)
+    ssl_mode = params.pop("sslmode", [None])[0]
+    params.pop("channel_binding", None)
+    clean_query = urlencode({k: v[0] for k, v in params.items()})
+    clean_url = urlunparse(parsed._replace(query=clean_query))
+    ssl_arg = "require" if ssl_mode == "require" else None
+    return clean_url, ssl_arg
+
+
+def test_asyncpg_url_strips_channel_binding():
+    """channel_binding=require is a psycopg3 extension; asyncpg must not see it."""
+    url = (
+        "postgresql://user:pass@host/db"
+        "?sslmode=require&channel_binding=require"
+    )
+    clean_url, ssl_arg = _strip_neon_url_params(url)
+    parsed = urlparse(clean_url)
+    qs = parse_qs(parsed.query)
+    assert "channel_binding" not in qs
+    assert "sslmode" not in qs
+    assert ssl_arg == "require"
+
+
+def test_asyncpg_url_preserves_other_params():
+    """Extra query params (other than sslmode / channel_binding) are kept intact."""
+    url = "postgresql://user:pass@host/db?sslmode=require&connect_timeout=10"
+    clean_url, ssl_arg = _strip_neon_url_params(url)
+    parsed = urlparse(clean_url)
+    qs = parse_qs(parsed.query)
+    assert qs.get("connect_timeout") == ["10"]
+    assert "sslmode" not in qs
+    assert ssl_arg == "require"
+
+
+def test_asyncpg_url_no_ssl_mode():
+    """When sslmode is absent, ssl_arg must be None (don't force TLS locally)."""
+    url = "postgresql://user:pass@localhost/db"
+    clean_url, ssl_arg = _strip_neon_url_params(url)
+    assert ssl_arg is None
+    assert clean_url == "postgresql://user:pass@localhost/db"
