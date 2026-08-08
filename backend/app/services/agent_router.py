@@ -1,15 +1,25 @@
 # app/services/agent_router.py
 import json
+import logging
 import os
 from typing import List, Dict, Any, Optional
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
+logger = logging.getLogger(__name__)
+
 
 class AgentRouterService:
+    FALLBACK_MODELS = [
+        "gemini-3.5-flash",
+        "gemini-3.6-flash",
+        "gemini-flash-latest",
+        "gemini-3.5-flash-lite",
+    ]
+
     def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-1.5-pro")
+        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash")
         
         if self.api_key:
             self.llm = ChatGoogleGenerativeAI(
@@ -19,28 +29,27 @@ class AgentRouterService:
             )
         else:
             self.llm = None
+
     async def _invoke_with_fallback(self, messages: List[Any]) -> Any:
-        if not self.llm:
-            raise RuntimeError("LLM is not initialized")
+        if not self.api_key:
+            raise RuntimeError("GEMINI_API_KEY is not configured")
+
+        candidates = [self.model_name] + [m for m in self.FALLBACK_MODELS if m != self.model_name]
+        last_exc = None
+        for model in candidates:
+            try:
+                llm = ChatGoogleGenerativeAI(
+                    model=model,
+                    google_api_key=self.api_key,
+                    temperature=0.0,
+                )
+                return await llm.ainvoke(messages)
+            except Exception as exc:
+                last_exc = exc
+                logger.warning(f"[AgentRouter] Gemini model '{model}' failed: {exc}")
         
-        try:
-            return await self.llm.ainvoke(messages)
-        except Exception as exc:
-            # Cycle through candidate fallback models until one succeeds
-            fallback_models = ["gemini-3.6-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
-            for fb_model in fallback_models:
-                if fb_model == self.model_name:
-                    continue
-                try:
-                    fallback_llm = ChatGoogleGenerativeAI(
-                        model=fb_model,
-                        google_api_key=self.api_key,
-                        temperature=0.0,
-                    )
-                    return await fallback_llm.ainvoke(messages)
-                except Exception:
-                    pass
-            raise exc
+        raise last_exc or RuntimeError("All Gemini models failed")
+
     async def reformulate_query(
         self,
         user_query: str,
@@ -50,7 +59,7 @@ class AgentRouterService:
         Takes the user prompt + internal document context, and generates 1 targeted search query
         for Exa AI to locate relevant legal precedents or statutory updates.
         """
-        if not self.llm:
+        if not self.api_key:
             return user_query
 
         context_summary = ""
@@ -72,7 +81,8 @@ class AgentRouterService:
                 HumanMessage(content=user_content)
             ])
             return str(response.content).strip()
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to reformulate query: {e}")
             return user_query
 
     async def detect_legal_conflicts(
@@ -84,7 +94,7 @@ class AgentRouterService:
         Compares uploaded contract clauses against retrieved live web search highlights.
         Returns a ConflictAlert dictionary if a contradiction is detected, or None.
         """
-        if not self.llm or not internal_chunks or not web_snippets:
+        if not self.api_key or not internal_chunks or not web_snippets:
             return None
 
         formatted_internal = "\n".join([f"- {c.get('text', '')[:300]}" for c in internal_chunks[:4]])
@@ -118,7 +128,9 @@ If NO conflict or contradiction exists, return ONLY:
             
             # Clean JSON formatting if wrapped in code blocks
             if raw_text.startswith("```"):
-                raw_text = raw_text.split("```")[1]
+                parts = raw_text.split("```")
+                if len(parts) > 1:
+                    raw_text = parts[1]
                 if raw_text.startswith("json"):
                     raw_text = raw_text[4:]
                 raw_text = raw_text.strip()
@@ -127,5 +139,6 @@ If NO conflict or contradiction exists, return ONLY:
             if parsed.get("has_conflict"):
                 return parsed
             return None
-        except Exception:
+        except Exception as e:
+            logger.error(f"Failed to detect legal conflicts: {e}")
             return None

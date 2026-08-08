@@ -124,6 +124,10 @@ async def chat_stream(
         filtered_chunks = [
             chunk for chunk in all_chunks if chunk.get("score", 0.0) >= payload.min_score_threshold
         ]
+        if not filtered_chunks and all_chunks:
+            # If threshold was too strict for a general/summarisation question, keep all available chunks
+            filtered_chunks = all_chunks
+
         filtered_chunks.sort(key=lambda x: x.get("score", 0.0), reverse=True)
         top_chunks = filtered_chunks[: payload.top_k]
 
@@ -185,7 +189,7 @@ async def chat_stream(
         internal_citations = [
             {
                 "document_id": c["document_id"],
-                "document_name": c["document_name"],
+                "document_name": c.get("document_name", "Document"),
                 "page_number": c["page_number"],
                 "chunk_id": c["chunk_id"],
             }
