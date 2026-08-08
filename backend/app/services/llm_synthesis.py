@@ -3,34 +3,93 @@ import logging
 import os
 import re
 from typing import List, Dict, Any, AsyncGenerator, Optional
+
 from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
 
-STRICT_MODE_SYSTEM_PROMPT = """You are SIFT.AI, a precision legal research assistant operating in STRICT MODE (Closed World).
+# ---------------------------------------------------------------------------
+# System Prompts
+# ---------------------------------------------------------------------------
+
+STRICT_MODE_SYSTEM_PROMPT = """You are SIFT.AI, a precision AI legal research assistant operating in STRICT MODE.
+
+Your purpose is to help legal researchers, lawyers, and law students analyse uploaded legal documents with pinpoint accuracy.
 
 CRITICAL GROUNDING RULES:
-1. You must answer the user query using ONLY the provided document chunks below.
-2. Every claim or factual statement in your response MUST include an internal citation tag formatted exactly as: [Doc: {{document_name}}, Page: {{page_number}}].
-3. Do NOT invent, assume, or extrapolate any legal facts, statutes, or external case law.
-4. If the provided document chunks do NOT contain sufficient information to answer the query, you MUST reply with this exact fallback sentence and nothing else:
-"Information not found in the uploaded documents."
+1. Answer the user query using ONLY the provided document chunks below.
+2. Every factual statement or legal claim MUST include an internal citation formatted as: [Doc: {{document_name}}, Page: {{page_number}}].
+3. Do NOT invent, assume, or extrapolate legal facts, clauses, or statutes not present in the chunks.
+4. If the chunks contain partial information, clearly state what was found and what remains unanswered — never just say "not found".
 5. Never output external web links or [Web: ...] citations in Strict Mode.
+
+FORMATTING & ARRANGEMENT RULES:
+You MUST arrange your response professionally using the following Markdown structure:
+
+### 📌 Executive Summary
+(Provide a brief, 1-2 sentence high-level summary of the findings here.)
+
+### 📝 Detailed Analysis
+(Provide your thorough legal analysis here. Use bolding for key terms, bullet points for lists, and subheadings `####` if necessary. Ground every claim with citations.)
+
+### 💡 Key Takeaways / Next Steps
+(Provide 1-3 actionable takeaways or concluding thoughts based solely on the documents.)
 
 DOCUMENT CHUNKS:
 {context_chunks}
 """
 
 
-ENHANCED_MODE_SYSTEM_PROMPT = """You are SIFT.AI, an advanced legal research assistant operating in ENHANCED MODE (Hybrid World).
+CONVERSATIONAL_SYSTEM_PROMPT = """You are SIFT.AI, an advanced AI legal research assistant.
+
+You help lawyers, legal researchers, paralegals, and law students analyse contracts, case law, statutes, and legal documents with speed, precision, and deep legal insight.
+
+Your knowledge spans all major legal domains including:
+- Contract law & commercial agreements
+- Tort law & civil liability
+- Criminal law & procedure
+- Constitutional & administrative law
+- Intellectual property (copyright, patents, trademarks)
+- Corporate & company law
+- Property, land & real estate law
+
+When a user greets you or asks a general question:
+- Respond in a warm, professional, and helpful tone — like an experienced legal counsel.
+- Briefly introduce your capabilities and invite them to upload a legal document or ask a legal question.
+- Feel free to offer a useful legal insight to showcase your value.
+
+When answering general legal questions without uploaded documents:
+- Provide clear, well-structured explanations grounded in standard legal principles.
+- Mention that specific situations may require tailored legal advice.
+"""
+
+
+ENHANCED_MODE_SYSTEM_PROMPT = """You are SIFT.AI, an advanced AI legal research assistant operating in ENHANCED MODE.
+
+You combine uploaded legal document analysis with cutting-edge live web precedents to deliver comprehensive legal insights.
 
 SYNTHESIS & CITATION RULES:
-1. Synthesize information from both Internal Document Chunks [INTERNAL_SOURCE] and Live Web Precedents [EXTERNAL_SOURCE].
-2. For claims sourced from internal documents, cite using: [Doc: {{document_name}}, Page: {{page_number}}].
-3. For claims sourced from live web search, cite using: [Web: {{publisher_domain}}]({{url}}).
-4. Clearly distinguish between internal case/contract facts and external legal precedents.
-5. If there is a legal conflict between an uploaded document clause and live statutory/case law, explicitly highlight the discrepancy.
+1. Synthesise information from both Internal Document Chunks and Live Web Precedents.
+2. For claims from internal documents, cite using: [Doc: {{document_name}}, Page: {{page_number}}].
+3. For claims from live web search, cite using: [Web: {{publisher_domain}}]({{url}}).
+4. Clearly distinguish between internal case/contract facts and external legal precedents or statutes.
+5. If there is a legal conflict between an uploaded document clause and live statutory/case law, explicitly highlight it with: ⚠️ **CONFLICT DETECTED** — followed by the legal explanation.
+
+FORMATTING & ARRANGEMENT RULES:
+You MUST arrange your response professionally using the following Markdown structure:
+
+### 📌 Executive Summary
+(Provide a brief, high-level summary of both the internal findings and external precedents.)
+
+### 📝 Detailed Analysis
+(Provide your thorough legal analysis here. Use bolding for key terms, bullet points for lists, and subheadings `####` if necessary. Integrate internal and external facts seamlessly, with clear citations.)
+
+### ⚖️ Legal Conflicts & Risks
+(If any conflicts or risks exist between the document and external law, detail them here. If none, briefly state that no major conflicts were found.)
+
+### 💡 Key Takeaways
+(Provide 1-3 actionable takeaways or concluding thoughts.)
 
 INTERNAL DOCUMENT CHUNKS:
 {internal_chunks}
@@ -40,69 +99,94 @@ LIVE WEB PRECEDENTS & SEARCH HIGHLIGHTS:
 """
 
 
+# ---------------------------------------------------------------------------
+# Service
+# ---------------------------------------------------------------------------
+
 class LLMSynthesisService:
+    """
+    Synthesizes legal analysis using Google Gemini models with automatic fallback.
+    Validated active models: gemini-3.5-flash, gemini-3.6-flash, gemini-flash-latest, gemini-3.5-flash-lite.
+    """
+
+    FALLBACK_MODELS = [
+        "gemini-3.5-flash",
+        "gemini-3.6-flash",
+        "gemini-flash-latest",
+        "gemini-3.5-flash-lite",
+    ]
+
     def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-1.5-flash")
+        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash")
         
         if self.api_key:
             self.llm = ChatGoogleGenerativeAI(
                 model=self.model_name,
                 google_api_key=self.api_key,
-                temperature=0.1,
+                temperature=0.2,
                 streaming=True,
             )
         else:
             self.llm = None
 
+    @staticmethod
+    def _extract_text(content: Any) -> str:
+        """Normalises Gemini content chunks (plain string or parts list) into clean text."""
+        if isinstance(content, str):
+            return content
+        if isinstance(content, list):
+            parts = []
+            for part in content:
+                if isinstance(part, dict) and "text" in part:
+                    parts.append(part["text"])
+                elif isinstance(part, str):
+                    parts.append(part)
+            return "".join(parts)
+        if isinstance(content, dict) and "text" in content:
+            return content["text"]
+        return str(content) if content else ""
+
     def validate_strict_response(self, response_text: str) -> str:
-        """
-        Zero-leak assertion guardrail: Strips external URLs and [Web: ...] tags if present in strict mode output.
-        """
-        # Strip web citation tags
+        """Strips web citations or external URLs that leak into strict mode output."""
         cleaned = re.sub(r'\[Web:[^\]]+\]\([^\)]+\)', '', response_text)
-        # Strip raw URLs
         cleaned = re.sub(r'https?://\S+', '', cleaned)
         return cleaned.strip()
 
-    async def _stream_llm_with_fallback(self, messages: List[Any]) -> AsyncGenerator[str, None]:
-        """Internal helper to stream from main LLM model, with fallback to stable models if needed."""
-        if not self.llm:
+    async def _stream_with_fallback(self, messages: List[Any]) -> AsyncGenerator[str, None]:
+        """Streams tokens from primary model, falling back to candidate models on failure."""
+        if not self.api_key:
             yield "LLM service unavailable: GEMINI_API_KEY is not configured."
             return
 
-        try:
-            async for chunk in self.llm.astream(messages):
-                if chunk.content:
-                    yield str(chunk.content)
-        except Exception as exc:
-            logger.error(f"LLM streaming failed with model '{self.model_name}': {exc}. Attempting fallback...")
-            # Cycle through candidate fallback models until one succeeds
-            fallback_models = ["gemini-3.6-flash", "gemini-1.5-flash", "gemini-2.0-flash"]
-            success = False
-            for fb_model in fallback_models:
-                if fb_model == self.model_name:
-                    continue
-                try:
-                    logger.info(f"Trying fallback model '{fb_model}'...")
-                    fallback_llm = ChatGoogleGenerativeAI(
-                        model=fb_model,
-                        google_api_key=self.api_key,
-                        temperature=0.1,
-                        streaming=True,
-                    )
-                    # Force evaluation of at least one chunk to verify availability
-                    async for chunk in fallback_llm.astream(messages):
-                        if chunk.content:
-                            yield str(chunk.content)
-                    success = True
-                    break
-                except Exception as fb_exc:
-                    logger.warning(f"Fallback model '{fb_model}' failed: {fb_exc}")
-            
-            if not success:
-                logger.error("All fallback models failed.")
-                yield f"\n[LLM Streaming Error: {exc}]"
+        # Build candidate list starting with primary model
+        candidates = [self.model_name] + [m for m in self.FALLBACK_MODELS if m != self.model_name]
+
+        last_error = None
+        for model in candidates:
+            try:
+                logger.info(f"[Gemini] Streaming via model '{model}'")
+                llm = ChatGoogleGenerativeAI(
+                    model=model,
+                    google_api_key=self.api_key,
+                    temperature=0.2,
+                    streaming=True,
+                )
+                yielded_any = False
+                async for chunk in llm.astream(messages):
+                    if chunk.content:
+                        text = self._extract_text(chunk.content)
+                        if text:
+                            yielded_any = True
+                            yield text
+                if yielded_any:
+                    return  # Success
+            except Exception as exc:
+                last_error = exc
+                logger.warning(f"[Gemini] Model '{model}' failed: {exc}. Trying fallback...")
+
+        logger.error(f"[Gemini] All models failed: {last_error}")
+        yield f"\n[LLM Error: {last_error}]"
 
     async def stream_strict_synthesis(
         self,
@@ -110,10 +194,15 @@ class LLMSynthesisService:
         context_chunks: List[Dict[str, Any]],
     ) -> AsyncGenerator[str, None]:
         """
-        Streams strict mode response tokens generated from internal vector store chunks.
+        Streams strict mode response tokens.
+        - If no document chunks are attached, responds conversationally.
+        - If chunks are present, performs grounded citation analysis.
         """
         if not context_chunks:
-            yield "Information not found in the uploaded documents."
+            system_msg = SystemMessage(content=CONVERSATIONAL_SYSTEM_PROMPT)
+            human_msg = HumanMessage(content=query)
+            async for token in self._stream_with_fallback([system_msg, human_msg]):
+                yield token
             return
 
         formatted_context = ""
@@ -128,7 +217,7 @@ class LLMSynthesisService:
         )
         human_msg = HumanMessage(content=query)
 
-        async for token in self._stream_llm_with_fallback([system_msg, human_msg]):
+        async for token in self._stream_with_fallback([system_msg, human_msg]):
             yield token
 
     async def stream_enhanced_synthesis(
@@ -138,7 +227,7 @@ class LLMSynthesisService:
         external_snippets: List[Dict[str, Any]],
     ) -> AsyncGenerator[str, None]:
         """
-        Streams enhanced mode response tokens synthesizing internal chunks + Exa web search.
+        Streams enhanced mode response tokens (internal chunks + live Exa web search).
         """
         formatted_internal = ""
         for idx, chunk in enumerate(internal_chunks, 1):
@@ -162,5 +251,5 @@ class LLMSynthesisService:
         )
         human_msg = HumanMessage(content=query)
 
-        async for token in self._stream_llm_with_fallback([system_msg, human_msg]):
+        async for token in self._stream_with_fallback([system_msg, human_msg]):
             yield token

@@ -80,28 +80,50 @@ class VectorStoreService:
         top_k: int = 5,
         predicates: dict[str, str] | None = None,
     ) -> list[dict[str, Any]]:
-        query_tokens = set(query.lower().split())
-        if not query_tokens:
-            return []
+        import re
 
-        scored_entries = []
+        # Clean query tokens (remove punctuation)
+        raw_tokens = re.findall(r'[a-zA-Z0-9]+', query.lower())
+        stop_words = {"the", "a", "an", "and", "or", "in", "on", "at", "to", "for", "of", "with", "by", "is", "it", "this", "that", "these", "those", "me", "tell", "about", "file", "document", "pdf", "summarise", "summarize", "summary", "overview", "explain", "what", "how", "give", "can", "you", "please"}
+        content_tokens = set([t for t in raw_tokens if t not in stop_words and len(t) > 1])
+        all_tokens = set(raw_tokens)
+
+        matching_entries = []
         for entry in self._entries:
             if predicates and any(
                 str(entry["metadata"].get(key)) != str(value) for key, value in predicates.items()
             ):
                 continue
+            matching_entries.append(entry)
 
-            entry_tokens = set(entry["text"].lower().split())
-            overlap = len(query_tokens & entry_tokens)
-            if overlap:
-                scored_entries.append({
-                    "text": entry["text"],
-                    "metadata": entry["metadata"],
-                    "score": float(overlap),
-                })
+        if not matching_entries:
+            return []
+
+        # Score matching entries
+        scored_entries = []
+        for entry in matching_entries:
+            entry_tokens = set(re.findall(r'[a-zA-Z0-9]+', entry["text"].lower()))
+            # Prefer content tokens, fallback to all tokens
+            overlap = len(content_tokens & entry_tokens) * 2 + len(all_tokens & entry_tokens)
+            scored_entries.append({
+                "text": entry["text"],
+                "metadata": entry["metadata"],
+                "score": float(overlap),
+            })
 
         scored_entries.sort(key=lambda item: item["score"], reverse=True)
-        return scored_entries[:top_k]
+
+        # If highest score > 0, return top matching chunks
+        top_matches = [e for e in scored_entries if e["score"] > 0][:top_k]
+        if top_matches:
+            return top_matches
+
+        # For broad overview/summarisation queries where specific keywords don't match,
+        # return the first top_k chunks of the document(s) with baseline score 1.0
+        return [
+            {"text": e["text"], "metadata": e["metadata"], "score": 1.0}
+            for e in matching_entries[:top_k]
+        ]
 
     async def delete_document(self, document_id: str) -> None:
         self._entries = [entry for entry in self._entries if entry["metadata"].get("document_id") != document_id]
@@ -297,6 +319,9 @@ class AhnlichVectorStoreService:
         condition = (
             _build_predicate_condition(predicates, predicates_module, metadata_module) if predicates else None
         )
+
+        # Ensure store exists before searching (initialize may have timed out on startup)
+        await self.initialize()
 
         host, port = self._connection_settings()
         try:
