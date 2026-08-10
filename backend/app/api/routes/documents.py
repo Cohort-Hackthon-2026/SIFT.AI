@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import os
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -11,6 +12,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from pydantic import BaseModel, Field
 
 from app.auth import get_current_user_id
+from app.rate_limit import rate_limited_user_id
 
 router = APIRouter(prefix="/api/v1")
 
@@ -168,7 +170,7 @@ async def upload_document(
     file: UploadFile = File(...),
     document_name: str | None = Form(default=None),
     source_type: str = Form(default="pdf"),
-    current_user_id: str = Depends(get_current_user_id),
+    current_user_id: str = Depends(rate_limited_user_id),
 ) -> DocumentUploadResponse:
     payload = DocumentUploadRequest(document_name=document_name, source_type=source_type)
 
@@ -186,12 +188,21 @@ async def upload_document(
         raise HTTPException(status_code=413, detail=f"File exceeds the {max_mb:.0f}MB upload limit")
 
     try:
-        pages = _extract_pdf_pages(file_bytes)
+        # PyMuPDF extraction + splitting are CPU-bound and synchronous; run
+        # them in a thread so a large PDF doesn't block the event loop (and
+        # every other in-flight request) for the duration of the parse. The
+        # response shape is unchanged - callers still get pages+chunks inline.
+        def _process() -> tuple[list[PageExtraction], str, list[TextChunk]]:
+            extracted_pages = _extract_pdf_pages(file_bytes)
+            new_document_id = str(uuid4())
+            extracted_chunks = _chunk_pages(
+                extracted_pages, document_id=new_document_id, user_id=current_user_id
+            )
+            return extracted_pages, new_document_id, extracted_chunks
+
+        pages, document_id, chunks = await asyncio.to_thread(_process)
     except Exception as exc:  # pragma: no cover - defensive path
         raise HTTPException(status_code=400, detail=f"Unable to process PDF: {exc}") from exc
-
-    document_id = str(uuid4())
-    chunks = _chunk_pages(pages, document_id=document_id, user_id=current_user_id)
 
     warnings: list[str] = []
     if pages and not chunks:
@@ -327,7 +338,7 @@ async def get_document_file(
 async def strict_search(
     request: Request,
     payload: StrictSearchRequest,
-    current_user_id: str = Depends(get_current_user_id),
+    current_user_id: str = Depends(rate_limited_user_id),
 ) -> StrictSearchResponse:
     if not payload.query.strip():
         raise HTTPException(status_code=400, detail="Query cannot be empty")
