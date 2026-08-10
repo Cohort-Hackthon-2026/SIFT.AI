@@ -24,7 +24,10 @@ class ChatRequest(BaseModel):
 
     query: str
     chat_id: Optional[str] = None
-    mode: str = "STRICT"  # "STRICT" or "ENHANCED"
+    # None = not supplied by the client -> fall back to the stored chat mode.
+    # STRICT is a real explicit choice here (NOT a sentinel), so an explicitly
+    # selected "STRICT" overrides a stored "ENHANCED" session.
+    mode: Optional[str] = None
     document_ids: Optional[List[str]] = None
     top_k: int = 5
     min_score_threshold: float = 0.5
@@ -64,8 +67,14 @@ async def chat_stream(
     chat_registry = getattr(request.app.state, "chat_registry", None)
 
     # 1. Resolve Chat Session defaults & verify ownership if chat_id is provided
+    #
+    # Mode precedence: the mode the client sends with THIS message always wins,
+    # so switching STRICT<->ENHANCED mid-conversation takes effect immediately.
+    # Only when the client omits mode entirely do we fall back to the mode the
+    # chat was created with.
     chat_record = None
-    effective_mode = payload.mode.upper() if payload.mode else "STRICT"
+    explicit_mode = payload.mode.upper().strip() if payload.mode and payload.mode.strip() else None
+    effective_mode = explicit_mode or "STRICT"
     effective_doc_ids = payload.document_ids or []
 
     if payload.chat_id and chat_registry:
@@ -75,11 +84,21 @@ async def chat_stream(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail=f"Chat '{payload.chat_id}' was not found.",
             )
-        # Use stored chat defaults if not explicitly overridden in payload
+        # Use stored chat defaults only when this message didn't override them.
         if not payload.document_ids and chat_record.get("document_ids"):
             effective_doc_ids = chat_record.get("document_ids", [])
-        if payload.mode == "STRICT" and chat_record.get("mode"):
+        if explicit_mode is None and chat_record.get("mode"):
             effective_mode = chat_record.get("mode", "STRICT")
+
+        # Persist the resolved mode back onto the chat so the session default
+        # tracks the user's most recent choice (and the sidebar reflects it).
+        if explicit_mode is not None and chat_record.get("mode") != explicit_mode:
+            try:
+                await chat_registry.update_chat(
+                    payload.chat_id, user_id=current_user_id, mode=explicit_mode
+                )
+            except Exception as exc:  # non-fatal: the stream still uses effective_mode
+                logger.warning(f"Failed to persist mode change for chat {payload.chat_id}: {exc}")
 
         # Persist User Message
         await chat_registry.add_message(
