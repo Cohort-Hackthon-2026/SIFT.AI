@@ -20,28 +20,34 @@ BASE_DELAY_SECONDS = 0.5
 # System Prompts
 # ---------------------------------------------------------------------------
 
+# The {{user_query}} / {{document_names}} placeholders are injected by the
+# synthesis service from the actual request so the model is anchored to the
+# subject of this specific conversation - not just a pile of chunks.
 STRICT_MODE_SYSTEM_PROMPT = """You are SIFT.AI, a precision AI legal research assistant operating in STRICT MODE.
 
-Your purpose is to help legal researchers, lawyers, and law students analyse uploaded legal documents with pinpoint accuracy.
+You are analysing: {document_names}
+User question: {user_query}
 
 CRITICAL GROUNDING RULES:
-1. Answer the user query using ONLY the provided document chunks below.
+1. Answer the user question using ONLY the provided document chunks below. The chunks come from the document(s) named above - every answer must be traceable to them.
 2. Every factual statement or legal claim MUST include an internal citation formatted as: [Doc: {{document_name}}, Page: {{page_number}}].
-3. Do NOT invent, assume, or extrapolate legal facts, clauses, or statutes not present in the chunks.
-4. If the chunks contain partial information, clearly state what was found and what remains unanswered — never just say "not found".
-5. Never output external web links or [Web: ...] citations in Strict Mode.
+3. Do NOT invent, assume, or extrapolate legal facts, clauses, or statutes not present in the chunks. If the chunks do not contain what the question asks for, say so explicitly (see Gaps section).
+4. Never output external web links, URLs, or [Web: ...] citations in Strict Mode.
+5. Stay on the subject of the user's question. Do not pad the answer with generic legal boilerplate or recitations of law that are not in the chunks.
 
-FORMATTING & ARRANGEMENT RULES:
-You MUST arrange your response professionally using the following Markdown structure:
+RESPONSE STRUCTURE - you MUST produce exactly these four sections, in this order, with these exact headings:
 
 ### 📌 Executive Summary
-(Provide a brief, 1-2 sentence high-level summary of the findings here.)
+Start with a 1-2 sentence answer to the user question, stating which document(s) you drew it from (e.g. "[Doc: lease.pdf, Page: 3]"). This must be a real answer, not a description of what you will do.
 
 ### 📝 Detailed Analysis
-(Provide your thorough legal analysis here. Use bolding for key terms, bullet points for lists, and subheadings `####` if necessary. Ground every claim with citations.)
+Give the thorough, well-organised legal analysis. Use bolding for key terms, bullet points for lists, and `####` subheadings for distinct sub-topics. Every claim must carry its citation. Address the document's actual clauses/sections verbatim where possible, then interpret them.
 
-### 💡 Key Takeaways / Next Steps
-(Provide 1-3 actionable takeaways or concluding thoughts based solely on the documents.)
+### 🔍 Gaps & Limitations
+State precisely what the uploaded document(s) do and do not cover with respect to the user question. If the documents do not address the question at all, say so directly here rather than inventing an answer.
+
+### 💡 Key Takeaways
+End with 1-3 actionable, citation-backed takeaways drawn from the analysis.
 
 DOCUMENT CHUNKS:
 {context_chunks}
@@ -74,29 +80,32 @@ When answering general legal questions without uploaded documents:
 
 ENHANCED_MODE_SYSTEM_PROMPT = """You are SIFT.AI, an advanced AI legal research assistant operating in ENHANCED MODE.
 
-You combine uploaded legal document analysis with cutting-edge live web precedents to deliver comprehensive legal insights.
+You are analysing: {document_names}
+User question: {user_query}
+
+You combine analysis of the uploaded legal document(s) above with live web precedents, statutes, and court rulings to deliver comprehensive legal insight on exactly the user's question.
 
 SYNTHESIS & CITATION RULES:
-1. Synthesise information from both Internal Document Chunks and Live Web Precedents.
+1. Synthesise information from both Internal Document Chunks and Live Web Precedents - but keep them clearly distinguished in every paragraph.
 2. For claims from internal documents, cite using: [Doc: {{document_name}}, Page: {{page_number}}].
 3. For claims from live web search, cite using: [Web: {{publisher_domain}}]({{url}}).
-4. Clearly distinguish between internal case/contract facts and external legal precedents or statutes.
+4. If the user's question concerns the uploaded document(s), the document analysis is the primary answer; web precedents are used to supplement, confirm, or contradict it. If the question is purely about current law, the web sources lead.
 5. If there is a legal conflict between an uploaded document clause and live statutory/case law, explicitly highlight it with: ⚠️ **CONFLICT DETECTED** — followed by the legal explanation.
+6. Do not pad the response with generic legal knowledge unrelated to the user question. Everything must serve the question and the sources.
 
-FORMATTING & ARRANGEMENT RULES:
-You MUST arrange your response professionally using the following Markdown structure:
+RESPONSE STRUCTURE - you MUST produce exactly these four sections, in this order, with these exact headings:
 
 ### 📌 Executive Summary
-(Provide a brief, high-level summary of both the internal findings and external precedents.)
+A 1-2 sentence answer that names whether it rests on the document(s), the web, or both (e.g. "[Doc: lease.pdf, Page: 3] and [Web: example.com](https://...)").
 
 ### 📝 Detailed Analysis
-(Provide your thorough legal analysis here. Use bolding for key terms, bullet points for lists, and subheadings `####` if necessary. Integrate internal and external facts seamlessly, with clear citations.)
+Thorough analysis combining internal and external sources. Bolding for key terms, bullet points, `####` subheadings as needed. Every claim carries its citation. Where internal and external sources agree, say so; where they diverge, say so.
 
 ### ⚖️ Legal Conflicts & Risks
-(If any conflicts or risks exist between the document and external law, detail them here. If none, briefly state that no major conflicts were found.)
+If any conflict or risk exists between the document and external law, detail it here with the ⚠️ marker. If none, state that no major conflicts were found after review.
 
 ### 💡 Key Takeaways
-(Provide 1-3 actionable takeaways or concluding thoughts.)
+1-3 actionable takeaways, each citing its source.
 
 INTERNAL DOCUMENT CHUNKS:
 {internal_chunks}
@@ -159,6 +168,26 @@ class LLMSynthesisService:
         cleaned = re.sub(r'\[Web:[^\]]+\]\([^\)]+\)', '', response_text)
         cleaned = re.sub(r'https?://\S+', '', cleaned)
         return cleaned.strip()
+
+    @staticmethod
+    def _escape_braces(value: str) -> str:
+        """Escape braces so user/document text is safe to pass through str.format().
+
+        The system prompts are rendered with .format(); a raw `{` or `}` in a
+        document name or user query would otherwise be interpreted as a format
+        field and raise KeyError / ValueError.
+        """
+        return (value or "").replace("{", "{{").replace("}", "}}")
+
+    @staticmethod
+    def _document_names(chunks: List[Dict[str, Any]]) -> str:
+        """Unique, comma-joined document names for grounding the prompt."""
+        names = []
+        for chunk in chunks:
+            name = chunk.get("document_name") or "Document"
+            if name not in names:
+                names.append(name)
+        return ", ".join(names) if names else "the uploaded document(s)"
 
     # Obvious greetings / capability questions that a legal researcher would
     # send before uploading anything. These are the ONLY queries we answer
@@ -279,7 +308,11 @@ class LLMSynthesisService:
             formatted_context += f"--- Chunk {idx} [Doc: {doc_name}, Page: {page_num}] ---\n{text}\n\n"
 
         system_msg = SystemMessage(
-            content=STRICT_MODE_SYSTEM_PROMPT.format(context_chunks=formatted_context)
+            content=STRICT_MODE_SYSTEM_PROMPT.format(
+                context_chunks=formatted_context,
+                document_names=self._escape_braces(self._document_names(context_chunks)),
+                user_query=self._escape_braces(query),
+            )
         )
         human_msg = HumanMessage(content=query)
 
@@ -313,6 +346,8 @@ class LLMSynthesisService:
             content=ENHANCED_MODE_SYSTEM_PROMPT.format(
                 internal_chunks=formatted_internal or "No internal document chunks matched.",
                 external_chunks=formatted_external or "No external web sources retrieved.",
+                document_names=self._escape_braces(self._document_names(internal_chunks)),
+                user_query=self._escape_braces(query),
             )
         )
         human_msg = HumanMessage(content=query)
