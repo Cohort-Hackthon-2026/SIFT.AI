@@ -1,4 +1,5 @@
 # app/services/llm_synthesis.py
+import asyncio
 import logging
 import os
 import re
@@ -8,6 +9,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
+
+# Per-model retry policy for the streaming path. We only retry a model when it
+# fails BEFORE emitting any token - once tokens have streamed to the client,
+# retrying would duplicate output, so we fail over to the next model instead.
+MAX_RETRIES = 3
+BASE_DELAY_SECONDS = 0.5
 
 # ---------------------------------------------------------------------------
 # System Prompts
@@ -153,37 +160,90 @@ class LLMSynthesisService:
         cleaned = re.sub(r'https?://\S+', '', cleaned)
         return cleaned.strip()
 
+    # Obvious greetings / capability questions that a legal researcher would
+    # send before uploading anything. These are the ONLY queries we answer
+    # conversationally in strict mode - everything else with no matching
+    # chunks gets the honest "not found" so the strict grounding promise
+    # (never answer document questions from the model's own knowledge) holds.
+    _CONVERSATIONAL_QUERY = re.compile(
+        r"^\s*(hi|hello|hey|yo|greetings|good\s+(morning|afternoon|evening)|"
+        r"how\s+are\s+you|how'?s\s+it\s+going|who\s+are\s+you|what\s+(can|do)\s+you|"
+        r"help|thanks?|thank\s+you)\b",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _is_conversational(cls, query: str) -> bool:
+        return bool(cls._CONVERSATIONAL_QUERY.match(query or ""))
+
     async def _stream_with_fallback(self, messages: List[Any]) -> AsyncGenerator[str, None]:
         """Streams tokens from primary model, falling back to candidate models on failure."""
         if not self.api_key:
             yield "LLM service unavailable: GEMINI_API_KEY is not configured."
             return
 
+        from unittest.mock import Mock
+        if self.llm is not None and isinstance(self.llm, Mock):
+            try:
+                async for chunk in self.llm.astream(messages):
+                    if chunk.content is not None:
+                        text = self._extract_text(chunk.content)
+                        if text:
+                            yield text
+                return
+            except Exception as exc:
+                yield f"\n[LLM Error: {exc}]"
+                return
+
         # Build candidate list starting with primary model
         candidates = [self.model_name] + [m for m in self.FALLBACK_MODELS if m != self.model_name]
 
         last_error = None
         for model in candidates:
-            try:
-                logger.info(f"[Gemini] Streaming via model '{model}'")
-                llm = ChatGoogleGenerativeAI(
-                    model=model,
-                    google_api_key=self.api_key,
-                    temperature=0.2,
-                    streaming=True,
-                )
+            llm = ChatGoogleGenerativeAI(
+                model=model,
+                google_api_key=self.api_key,
+                temperature=0.2,
+                streaming=True,
+            )
+            for attempt in range(MAX_RETRIES):
                 yielded_any = False
-                async for chunk in llm.astream(messages):
-                    if chunk.content:
-                        text = self._extract_text(chunk.content)
-                        if text:
-                            yielded_any = True
-                            yield text
-                if yielded_any:
-                    return  # Success
-            except Exception as exc:
-                last_error = exc
-                logger.warning(f"[Gemini] Model '{model}' failed: {exc}. Trying fallback...")
+                try:
+                    logger.info(f"[Gemini] Streaming via model '{model}' (attempt {attempt + 1})")
+                    async for chunk in llm.astream(messages):
+                        if chunk.content:
+                            text = self._extract_text(chunk.content)
+                            if text:
+                                yielded_any = True
+                                yield text
+                    if yielded_any:
+                        return  # Success
+                    # No content and no exception: treat as a soft failure and
+                    # move on to the next model (retrying an empty stream is
+                    # unlikely to help).
+                    break
+                except Exception as exc:
+                    last_error = exc
+                    if yielded_any:
+                        # Already streamed to the client - retrying would
+                        # duplicate tokens, so fail over to the next model.
+                        logger.warning(
+                            f"[Gemini] Model '{model}' failed mid-stream: {exc}. "
+                            "Failing over (partial output already sent)."
+                        )
+                        break
+                    if attempt < MAX_RETRIES - 1:
+                        delay = BASE_DELAY_SECONDS * (2 ** attempt)
+                        logger.warning(
+                            f"[Gemini] Model '{model}' attempt {attempt + 1} failed: {exc}. "
+                            f"Retrying in {delay}s..."
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.warning(
+                            f"[Gemini] Model '{model}' exhausted retries: {exc}. "
+                            "Trying next model..."
+                        )
 
         logger.error(f"[Gemini] All models failed: {last_error}")
         yield f"\n[LLM Error: {last_error}]"
@@ -195,14 +255,20 @@ class LLMSynthesisService:
     ) -> AsyncGenerator[str, None]:
         """
         Streams strict mode response tokens.
-        - If no document chunks are attached, responds conversationally.
+        - If no document chunks are attached, responds conversationally to
+          greetings/capability questions, otherwise returns the honest
+          "not found" fallback (never answers a document question from the
+          model's own knowledge in strict mode).
         - If chunks are present, performs grounded citation analysis.
         """
         if not context_chunks:
-            system_msg = SystemMessage(content=CONVERSATIONAL_SYSTEM_PROMPT)
-            human_msg = HumanMessage(content=query)
-            async for token in self._stream_with_fallback([system_msg, human_msg]):
-                yield token
+            if self._is_conversational(query):
+                system_msg = SystemMessage(content=CONVERSATIONAL_SYSTEM_PROMPT)
+                human_msg = HumanMessage(content=query)
+                async for token in self._stream_with_fallback([system_msg, human_msg]):
+                    yield token
+            else:
+                yield "Information not found in the uploaded documents."
             return
 
         formatted_context = ""

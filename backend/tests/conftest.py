@@ -1,12 +1,33 @@
+import os
+
 import pytest
 from unittest.mock import patch
 from fastapi.testclient import TestClient
 
 from app.auth import get_current_user_id
 from app.main import app
+from app.rate_limit import get_rate_limiter
 from app.services.storage import NoopStorageService
 
 DEFAULT_TEST_USER_ID = "test-user-1"
+
+
+@pytest.fixture(autouse=True)
+def disable_rate_limiting():
+    """Rate limiting is a process-wide singleton keyed by user_id; left on, a
+    full suite run would exceed the per-minute quota for the shared test user
+    and start returning 429s. Disable it by default and reset the window
+    between tests. The dedicated rate-limit test re-enables it explicitly.
+    """
+    prev = os.environ.get("RATE_LIMIT_ENABLED")
+    os.environ["RATE_LIMIT_ENABLED"] = "false"
+    get_rate_limiter().reset()
+    yield
+    get_rate_limiter().reset()
+    if prev is None:
+        os.environ.pop("RATE_LIMIT_ENABLED", None)
+    else:
+        os.environ["RATE_LIMIT_ENABLED"] = prev
 
 
 @pytest.fixture(autouse=True)
