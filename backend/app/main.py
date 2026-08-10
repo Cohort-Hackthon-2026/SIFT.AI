@@ -10,6 +10,7 @@ from app.api.routes.chat import router as chat_router
 from app.api.routes.chats import router as chats_router
 from app.api.routes.documents import router as documents_router
 from app.api.routes.health import router as health_router
+from app.config import get_settings
 from app.db.chat_registry import create_chat_registry
 from app.db.registry import create_document_registry
 from app.services.cache import create_search_cache
@@ -19,6 +20,12 @@ from app.services.vector_store import create_vector_store_service
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    # Validate + report configuration up front so missing critical keys
+    # (e.g. GEMINI_API_KEY) surface in the logs at boot rather than deep
+    # inside the first chat stream.
+    app.state.settings = get_settings()
+    app.state.settings.log_startup_report()
+
     # Initialize Ahnlich store on server startup
     app.state.vector_store = create_vector_store_service()
     await app.state.vector_store.initialize()
