@@ -49,10 +49,28 @@ def test_guardrail_returns_empty_string_for_url_only_input() -> None:
 # stream_strict_synthesis
 # ---------------------------------------------------------------------------
 
-async def test_strict_empty_chunks_yields_fallback() -> None:
+async def test_strict_empty_chunks_non_greeting_yields_fallback() -> None:
+    """A real document question with no matching chunks must return the honest
+    'not found' message, never an answer from the model's own knowledge."""
     svc = LLMSynthesisService(api_key="test-key")
-    tokens = [t async for t in svc.stream_strict_synthesis("any query", [])]
+    tokens = [t async for t in svc.stream_strict_synthesis("What does clause 4 say?", [])]
     assert tokens == ["Information not found in the uploaded documents."]
+
+
+async def test_strict_empty_chunks_greeting_is_conversational() -> None:
+    """Greetings/capability questions with no chunks are answered
+    conversationally rather than getting a cold 'not found'."""
+    async def _mock_astream(messages):
+        chunk = MagicMock()
+        chunk.content = "Hello! I'm SIFT.AI, your legal research assistant."
+        yield chunk
+
+    svc = LLMSynthesisService(api_key="test-key")
+    svc.llm = MagicMock()
+    svc.llm.astream = _mock_astream
+
+    tokens = [t async for t in svc.stream_strict_synthesis("Hi there", [])]
+    assert "".join(tokens) == "Hello! I'm SIFT.AI, your legal research assistant."
 
 
 async def test_strict_no_api_key_yields_unavailable_message() -> None:
