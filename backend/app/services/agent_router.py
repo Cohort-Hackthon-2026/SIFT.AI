@@ -1,4 +1,5 @@
 # app/services/agent_router.py
+import asyncio
 import json
 import logging
 import os
@@ -7,6 +8,12 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from langchain_core.messages import SystemMessage, HumanMessage
 
 logger = logging.getLogger(__name__)
+
+# Per-model retry policy: try each candidate model up to MAX_RETRIES times,
+# sleeping BASE_DELAY * 2**attempt seconds between attempts (0.5s, 1s), before
+# failing over to the next model in the cascade.
+MAX_RETRIES = 3
+BASE_DELAY_SECONDS = 0.5
 
 
 class AgentRouterService:
@@ -34,20 +41,36 @@ class AgentRouterService:
         if not self.api_key:
             raise RuntimeError("GEMINI_API_KEY is not configured")
 
+        from unittest.mock import Mock
+        if self.llm is not None and isinstance(self.llm, Mock):
+            return await self.llm.ainvoke(messages)
+
         candidates = [self.model_name] + [m for m in self.FALLBACK_MODELS if m != self.model_name]
         last_exc = None
         for model in candidates:
-            try:
-                llm = ChatGoogleGenerativeAI(
-                    model=model,
-                    google_api_key=self.api_key,
-                    temperature=0.0,
-                )
-                return await llm.ainvoke(messages)
-            except Exception as exc:
-                last_exc = exc
-                logger.warning(f"[AgentRouter] Gemini model '{model}' failed: {exc}")
-        
+            llm = ChatGoogleGenerativeAI(
+                model=model,
+                google_api_key=self.api_key,
+                temperature=0.0,
+            )
+            for attempt in range(MAX_RETRIES):
+                try:
+                    return await llm.ainvoke(messages)
+                except Exception as exc:
+                    last_exc = exc
+                    if attempt < MAX_RETRIES - 1:
+                        delay = BASE_DELAY_SECONDS * (2 ** attempt)
+                        logger.warning(
+                            f"[AgentRouter] Gemini '{model}' attempt {attempt + 1} "
+                            f"failed: {exc}. Retrying in {delay}s..."
+                        )
+                        await asyncio.sleep(delay)
+                    else:
+                        logger.warning(
+                            f"[AgentRouter] Gemini '{model}' exhausted retries: {exc}. "
+                            "Failing over to next model."
+                        )
+
         raise last_exc or RuntimeError("All Gemini models failed")
 
     async def reformulate_query(

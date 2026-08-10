@@ -1,13 +1,16 @@
 # app/api/routes/chat.py
+import asyncio
 import json
 import logging
 from typing import Any, List, Optional
+from urllib.parse import urlparse
+
 from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, model_validator
 from sse_starlette.sse import EventSourceResponse
 
 
-from app.auth import get_current_user_id
+from app.rate_limit import rate_limited_user_id
 from app.services.agent_router import AgentRouterService
 from app.services.llm_synthesis import LLMSynthesisService
 from app.services.web_search import WebSearchService
@@ -41,7 +44,7 @@ class ChatRequest(BaseModel):
 async def chat_stream(
     request: Request,
     payload: ChatRequest,
-    current_user_id: str = Depends(get_current_user_id),
+    current_user_id: str = Depends(rate_limited_user_id),
 ):
     """
     Main agentic chat endpoint streaming tokens and event updates via Server-Sent Events (SSE).
@@ -177,6 +180,15 @@ async def chat_stream(
             exa_query = await agent_router.reformulate_query(payload.query, processed_chunks)
             web_res = await web_service.search_external_legal_web(exa_query, num_results=4)
             external_snippets = web_res.get("results", [])
+            
+            if web_res.get("error"):
+                yield {
+                    "event": "status",
+                    "data": json.dumps({
+                        "step": f"Web search failed: {web_res.get('error')}. Proceeding without web sources.",
+                        "progress": 55
+                    }),
+                }
 
             yield {
                 "event": "status",
@@ -196,7 +208,11 @@ async def chat_stream(
             for c in processed_chunks
         ]
         external_citations = [
-            {"title": s["title"], "url": s["url"], "domain": s.get("title", "Web")}
+            {
+                "title": s.get("title", "Web Source"),
+                "url": s.get("url", ""),
+                "domain": urlparse(s.get("url", "")).netloc or "Web",
+            }
             for s in external_snippets
         ]
 
@@ -220,36 +236,63 @@ async def chat_stream(
 
         full_assistant_response = []
 
-        try:
-            if effective_mode == "STRICT":
-                async for token in llm_service.stream_strict_synthesis(payload.query, processed_chunks):
-                    safe_token = llm_service.validate_strict_response(token)
-                    if safe_token:
-                        full_assistant_response.append(safe_token)
-                        yield {"event": "message", "data": json.dumps({"delta": safe_token})}
-            else:
-                async for token in llm_service.stream_enhanced_synthesis(
-                    payload.query, processed_chunks, external_snippets
-                ):
-                    if token:
-                        full_assistant_response.append(token)
-                        yield {"event": "message", "data": json.dumps({"delta": token})}
-        except Exception as err:
-            logger.error(f"Error during LLM streaming: {err}")
-            err_msg = f"\n[Streaming error: {err}]"
-            full_assistant_response.append(err_msg)
-            yield {"event": "message", "data": json.dumps({"delta": err_msg})}
+        async def _persist_assistant() -> None:
+            """Save whatever assistant text we accumulated.
 
-        # Persist Assistant Response if chat_id is present
-        if payload.chat_id and chat_registry:
+            Called both on normal completion and from the finally-block when
+            the client disconnects mid-stream (asyncio.CancelledError), so a
+            partial answer is never silently lost from the chat history.
+            """
+            if not (payload.chat_id and chat_registry):
+                return
             assistant_content = "".join(full_assistant_response).strip()
-            if assistant_content:
+            if not assistant_content:
+                return
+            try:
                 await chat_registry.add_message(
                     chat_id=payload.chat_id,
                     role="assistant",
                     content=assistant_content,
                     metadata=metadata_payload,
                 )
+            except Exception as persist_err:  # never let a save failure mask the stream
+                logger.error(f"Failed to persist assistant response: {persist_err}")
+
+        persisted = False
+        try:
+            try:
+                if effective_mode == "STRICT":
+                    async for token in llm_service.stream_strict_synthesis(payload.query, processed_chunks):
+                        safe_token = llm_service.validate_strict_response(token)
+                        if safe_token:
+                            full_assistant_response.append(safe_token)
+                            yield {"event": "message", "data": json.dumps({"delta": safe_token})}
+                else:
+                    async for token in llm_service.stream_enhanced_synthesis(
+                        payload.query, processed_chunks, external_snippets
+                    ):
+                        if token:
+                            full_assistant_response.append(token)
+                            yield {"event": "message", "data": json.dumps({"delta": token})}
+            except asyncio.CancelledError:
+                # Client disconnected mid-stream: persist the partial answer,
+                # then re-raise so the ASGI server can tear the request down.
+                await _persist_assistant()
+                persisted = True
+                raise
+            except Exception as err:
+                logger.error(f"Error during LLM streaming: {err}")
+                err_msg = f"\n[Streaming error: {err}]"
+                full_assistant_response.append(err_msg)
+                yield {"event": "message", "data": json.dumps({"delta": err_msg})}
+
+            # Persist Assistant Response on normal completion
+            await _persist_assistant()
+            persisted = True
+        finally:
+            # Backstop: any other early exit (e.g. GeneratorExit) still saves.
+            if not persisted:
+                await _persist_assistant()
 
         yield {
             "event": "status",
