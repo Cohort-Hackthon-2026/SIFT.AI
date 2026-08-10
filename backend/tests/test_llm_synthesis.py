@@ -137,6 +137,58 @@ async def test_strict_formats_context_with_doc_name_and_page() -> None:
     assert "12" in system_content
 
 
+async def test_strict_prompt_is_grounded_to_query_and_documents() -> None:
+    """The system prompt must name the actual user question and document(s)
+    so the model is anchored to this conversation's subject, not just chunks."""
+    captured_messages = []
+
+    async def _mock_astream(messages):
+        captured_messages.extend(messages)
+        chunk = MagicMock()
+        chunk.content = "answer"
+        yield chunk
+
+    svc = LLMSynthesisService(api_key="test-key")
+    svc.llm = MagicMock()
+    svc.llm.astream = _mock_astream
+
+    chunks = [
+        {"document_name": "Lease-Agreement.pdf", "page_number": 3, "text": "Clause 4."},
+        {"document_name": "Addendum.pdf", "page_number": 1, "text": "Amendment."},
+    ]
+    _ = [t async for t in svc.stream_strict_synthesis("When can the landlord terminate?", chunks)]
+
+    system_content = captured_messages[0].content
+    # The exact user question is injected...
+    assert "When can the landlord terminate?" in system_content
+    # ...as are all distinct document names.
+    assert "Lease-Agreement.pdf" in system_content
+    assert "Addendum.pdf" in system_content
+
+
+async def test_strict_prompt_escapes_braces_in_query() -> None:
+    """A query containing braces must not break str.format() rendering."""
+    captured_messages = []
+
+    async def _mock_astream(messages):
+        captured_messages.extend(messages)
+        chunk = MagicMock()
+        chunk.content = "answer"
+        yield chunk
+
+    svc = LLMSynthesisService(api_key="test-key")
+    svc.llm = MagicMock()
+    svc.llm.astream = _mock_astream
+
+    chunks = [{"document_name": "policy.pdf", "page_number": 1, "text": "content"}]
+    # Should not raise KeyError/ValueError from the {placeholder} in the query.
+    tokens = [t async for t in svc.stream_strict_synthesis("What does {clause_x} mean?", chunks)]
+
+    assert "".join(tokens) == "answer"
+    system_content = captured_messages[0].content
+    assert "clause_x" in system_content
+
+
 # ---------------------------------------------------------------------------
 # stream_enhanced_synthesis
 # ---------------------------------------------------------------------------
@@ -184,3 +236,29 @@ async def test_enhanced_includes_external_source_in_prompt() -> None:
 
     system_content = captured_messages[0].content
     assert "https://court.gov.ng/ruling" in system_content
+
+
+async def test_enhanced_prompt_is_grounded_to_query_and_documents() -> None:
+    """Enhanced mode must also anchor the prompt to the user question and the
+    internal document name(s)."""
+    captured_messages = []
+
+    async def _mock_astream(messages):
+        captured_messages.extend(messages)
+        chunk = MagicMock()
+        chunk.content = "answer"
+        yield chunk
+
+    svc = LLMSynthesisService(api_key="test-key")
+    svc.llm = MagicMock()
+    svc.llm.astream = _mock_astream
+
+    internal = [{"document_name": "Merger-Agreement.pdf", "page_number": 8, "text": "Section 9."}]
+    external = [{"title": "SEC Ruling", "url": "https://sec.gov/x", "highlights": "text"}]
+    _ = [t async for t in svc.stream_enhanced_synthesis(
+        "Does the merger comply with current SEC rules?", internal, external
+    )]
+
+    system_content = captured_messages[0].content
+    assert "Does the merger comply with current SEC rules?" in system_content
+    assert "Merger-Agreement.pdf" in system_content
