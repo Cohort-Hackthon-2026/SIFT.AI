@@ -223,6 +223,7 @@ async def chat_stream(
                 "document_name": c.get("document_name", "Document"),
                 "page_number": c["page_number"],
                 "chunk_id": c["chunk_id"],
+                "file_url": f"/api/v1/documents/{c['document_id']}/file" if c.get("document_id") else None,
             }
             for c in processed_chunks
         ]
