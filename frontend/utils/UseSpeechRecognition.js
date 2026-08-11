@@ -1,10 +1,7 @@
 import { useEffect, useRef, useState } from "react";
-import { useChat } from "../store/chat";
 import { api } from "../src/lib/api";
 
 export default function useSpeechRecognition() {
-    const setInput = useChat((s) => s.setInput);
-
     const recognitionRef = useRef(null);
     const recorderRef = useRef(null);
     const streamRef = useRef(null);
@@ -25,7 +22,7 @@ export default function useSpeechRecognition() {
         const recognition =
             new SpeechRecognition();
 
-        recognition.continuous = false;
+        recognition.continuous = true;
         recognition.interimResults = true;
         recognition.lang = "en-US";
 
@@ -50,12 +47,12 @@ export default function useSpeechRecognition() {
             }
 
             setTranscript(transcript);
-            setInput(transcript);
+            window.dispatchEvent(new CustomEvent("voice-transcript", { detail: { text: transcript, replaceInterim: true } }));
         };
 
         recognitionRef.current = recognition;
         return () => recognition.abort();
-    }, [setInput]);
+    }, []);
 
     const start = async () => {
         setError("");
@@ -89,7 +86,7 @@ export default function useSpeechRecognition() {
                     const result = await api.transcribeAudio(formData, "en");
                     const text = result?.text?.trim() || "";
                     setTranscript(text);
-                    setInput(text);
+                    window.dispatchEvent(new CustomEvent("voice-transcript", { detail: { text } }));
                     setStatus("idle");
                 } catch (err) {
                     setError(err.message || "The recording could not be transcribed.");

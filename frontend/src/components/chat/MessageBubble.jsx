@@ -1,7 +1,5 @@
-import {
-    Bot,
-    User,
-} from "lucide-react";
+import { Bot } from "lucide-react";
+import { useUser } from "@clerk/react";
 
 import CitationBadge from "./CitationBadge";
 import MarkdownRenderer from "./MarkdownRenderer";
@@ -9,6 +7,8 @@ import ChatActions from "./ChatActions";
 
 function MessageBubble({ message }) {
     const isUser = message.role === "user";
+    const { user } = useUser();
+    const email = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || "";
 
     return (
         <div
@@ -71,16 +71,16 @@ function MessageBubble({ message }) {
                                     <IconButton icon={Volume2} />
                                 </div> */}
 
-                                <ChatActions text={message.content} />
                             </>
                         )}
+                        <ChatActions text={message.content} />
                     </>
                 )}
             </div>
 
             {isUser && (
-                <div className="h-10 w-10 flex-shrink-0 items-center justify-center rounded-xl bg-surface border border-border text-primary hidden sm:flex">
-                    <User size={20} />
+                <div className="h-8 w-8 flex-shrink-0 items-center justify-center overflow-hidden rounded-lg bg-surface border border-border text-xs font-semibold text-primary hidden sm:flex">
+                    {user?.imageUrl ? <img src={user.imageUrl} alt="" className="h-full w-full object-cover" /> : email.slice(0, 2).toUpperCase() || "ME"}
                 </div>
             )}
         </div>

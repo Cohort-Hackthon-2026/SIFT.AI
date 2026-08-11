@@ -1,8 +1,6 @@
 import { X } from "lucide-react";
 
 import DropZone from "./DropZone";
-import UploadItem from "./UploadItem";
-
 import { useUpload } from "../../../store/upload";
 
 function UploadDrawer() {
@@ -52,18 +50,7 @@ function UploadDrawer() {
 
                     <DropZone />
 
-                    {files.length > 0 && (
-                        <div className="space-y-4">
-
-                            {files.map((file) => (
-                                <UploadItem
-                                    key={file.id}
-                                    file={file}
-                                />
-                            ))}
-
-                        </div>
-                    )}
+                    {files.length > 0 && <p className="text-sm text-textMuted">Documents selected. Upload progress appears in the composer.</p>}
 
                 </div>
 

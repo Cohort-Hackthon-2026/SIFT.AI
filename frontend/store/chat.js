@@ -1,5 +1,4 @@
 import { create } from "zustand";
-import { persist } from "zustand/middleware";
 
 import { api } from "../src/lib/api";
 import { streamChatQuery } from "../src/lib/sseClient";
@@ -59,7 +58,7 @@ const chatStore = (set, get) => ({
   streamSteps: [],
   error: null,
 
-  setInput: (input) => set({ input }),
+  setInput: (input) => set((state) => ({ input: typeof input === "function" ? input(state.input) : input })),
 
   addMessage: (message) =>
     set((state) => ({
@@ -159,16 +158,11 @@ const chatStore = (set, get) => ({
       role: "user",
       content: trimmed,
     };
-
-    const assistantMessage = {
-      id: crypto.randomUUID(),
-      role: "assistant",
-      content: "",
-      citations: [],
-    };
+    const assistantMessage = { id: crypto.randomUUID(), role: "assistant", content: "", citations: [] };
+    let assistantMetadata = {};
 
     set((state) => ({
-      messages: [...state.messages, userMessage, assistantMessage],
+      messages: [...state.messages, userMessage],
       input: "",
       isSending: true,
       error: null,
@@ -192,24 +186,13 @@ const chatStore = (set, get) => ({
         },
         onToken: (delta) => {
           assistantContent += delta;
-          set((state) => ({
-            messages: state.messages.map((message) =>
-              message.id === assistantMessage.id ? { ...message, content: assistantContent } : message
-            ),
-          }));
         },
         onMetadata: (payload) => {
           citations = [
             ...(payload.internal_citations || []),
             ...(payload.external_citations || []),
           ].map(normalizeCitation).filter(Boolean);
-          set((state) => ({
-            messages: state.messages.map((message) =>
-              message.id === assistantMessage.id
-                ? { ...message, citations, conflictAlert: payload.conflict_alert || null, mode: payload.mode }
-                : message
-            ),
-          }));
+          assistantMetadata = { conflictAlert: payload.conflict_alert || null, mode: payload.mode };
         },
         onStatus: (payload) => {
           if (!payload?.step) return;
@@ -223,11 +206,14 @@ const chatStore = (set, get) => ({
         },
       });
 
+      const completedAssistantMessage = { ...assistantMessage, content: assistantContent, citations, ...assistantMetadata };
+      set((state) => ({ messages: [...state.messages, completedAssistantMessage] }));
+
       if (!get().chats.some((chat) => chat.chat_id === chatId)) {
         await get().loadChats();
       }
 
-      return assistantMessage;
+      return completedAssistantMessage;
     } catch (err) {
       // Format error message for display
       let errorMessage = err.message || "An error occurred";
@@ -246,15 +232,7 @@ const chatStore = (set, get) => ({
 
       // Update assistant message with error content
       set((state) => ({
-        messages: state.messages.map((message) =>
-          message.id === assistantMessage.id
-            ? {
-                ...message,
-                content: `**Error:** "${errorMessage}".\n\nPlease try again or adjust your request.`,
-                error: true,
-              }
-            : message
-        ),
+        messages: [...state.messages, { id: crypto.randomUUID(), role: "assistant", content: `**Error:** "${errorMessage}".\n\nPlease try again or adjust your request.`, error: true }],
         error: errorMessage,
       }));
 
@@ -265,14 +243,4 @@ const chatStore = (set, get) => ({
   },
 });
 
-export const useChat = create(
-  persist(chatStore, {
-    name: "chat",
-    partialize: (state) => ({
-      chats: state.chats,
-      activeChatId: state.activeChatId,
-      messages: state.messages,
-      input: state.input,
-    }),
-  })
-);
+export const useChat = create(chatStore);

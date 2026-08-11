@@ -29,10 +29,21 @@ function Sidebar({ isOpen, onClose }) {
   useEffect(() => {
     if (isSignedIn) {
       void loadChats();
+    } else {
+      useChat.getState().setChats([]);
+      useChat.getState().setActiveChatId(null);
+      useChat.getState().clearMessages();
     }
   }, [isSignedIn, loadChats]);
 
   const handleNewChat = async () => {
+    if (!isSignedIn) {
+      useChat.getState().setActiveChatId(null);
+      useChat.getState().clearMessages();
+      useChat.getState().setInput("");
+      onClose?.();
+      return;
+    }
     try {
       await createNewChat("New Research Chat");
     } catch {
@@ -112,9 +123,13 @@ function Sidebar({ isOpen, onClose }) {
                 />
               ))}
             </div>
-          ) : (
+          ) : isSignedIn ? (
             <div className="rounded-2xl border border-border bg-background/50 p-3 text-sm text-textMuted">
               No chats yet. Start a new research thread.
+            </div>
+          ) : (
+            <div className="rounded-2xl border border-border bg-background/50 p-4 text-sm text-textMuted">
+              Sign in to save and access your recent chats.
             </div>
           )}
 
@@ -125,7 +140,7 @@ function Sidebar({ isOpen, onClose }) {
           )}
         </div>
 
-        <SidebarFooter email={email} onLogout={handleLogout} isSigningOut={isSigningOut} />
+        {isSignedIn && <SidebarFooter email={email} imageUrl={user?.imageUrl} onLogout={handleLogout} isSigningOut={isSigningOut} />}
       </aside>
 
       {isOpen && (
