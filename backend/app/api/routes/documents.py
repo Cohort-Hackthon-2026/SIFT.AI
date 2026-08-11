@@ -65,6 +65,7 @@ class DocumentUploadResponse(BaseModel):
     user_id: str
     document_name: str
     source_type: str
+    file_url: str | None = None
     pages: list[PageExtraction]
     chunks: list[TextChunk]
     warnings: list[str] = Field(default_factory=list)
@@ -79,6 +80,7 @@ class DocumentSummary(BaseModel):
     chunk_count: int
     file_size_bytes: int
     uploaded_at: datetime
+    file_url: str | None = None
 
 
 class DocumentListResponse(BaseModel):
@@ -136,21 +138,29 @@ def _extract_pdf_pages(file_bytes: bytes) -> list[PageExtraction]:
     return pages
 
 
-def _chunk_pages(pages: list[PageExtraction], document_id: str, user_id: str) -> list[TextChunk]:
-    splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=100, separators=["\n\n", "\n", " "])
+def _chunk_pages(
+    pages: list[PageExtraction],
+    document_id: str,
+    user_id: str,
+    chunk_size: int = 1000,
+    chunk_overlap: int = 200,
+) -> list[TextChunk]:
+    splitter = RecursiveCharacterTextSplitter(
+        chunk_size=chunk_size,
+        chunk_overlap=chunk_overlap,
+    )
     chunks: list[TextChunk] = []
 
     for page in pages:
         if not page.text.strip():
             continue
-
-        split_texts = splitter.split_text(page.text)
-        for index, chunk_text in enumerate(split_texts, start=1):
-            chunk_id = f"{document_id}-p{page.page_number}-c{index}"
+        splits = splitter.split_text(page.text)
+        for split in splits:
+            chunk_id = str(uuid4())
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
-                    text=chunk_text.strip(),
+                    text=split,
                     page_number=page.page_number,
                     metadata=ChunkMetadata(
                         chunk_id=chunk_id,
@@ -168,8 +178,8 @@ def _chunk_pages(pages: list[PageExtraction], document_id: str, user_id: str) ->
 async def upload_document(
     request: Request,
     file: UploadFile = File(...),
-    document_name: str | None = Form(default=None),
     source_type: str = Form(default="pdf"),
+    document_name: str | None = Form(default=None),
     current_user_id: str = Depends(rate_limited_user_id),
 ) -> DocumentUploadResponse:
     payload = DocumentUploadRequest(document_name=document_name, source_type=source_type)
@@ -188,10 +198,6 @@ async def upload_document(
         raise HTTPException(status_code=413, detail=f"File exceeds the {max_mb:.0f}MB upload limit")
 
     try:
-        # PyMuPDF extraction + splitting are CPU-bound and synchronous; run
-        # them in a thread so a large PDF doesn't block the event loop (and
-        # every other in-flight request) for the duration of the parse. The
-        # response shape is unchanged - callers still get pages+chunks inline.
         def _process() -> tuple[list[PageExtraction], str, list[TextChunk]]:
             extracted_pages = _extract_pdf_pages(file_bytes)
             new_document_id = str(uuid4())
@@ -206,11 +212,6 @@ async def upload_document(
 
     warnings: list[str] = []
     if pages and not chunks:
-        # Common with scanned/image-only PDFs: PyMuPDF finds pages but no
-        # extractable text layer, so there is nothing to embed or search.
-        # We still register the document (the user uploaded something real)
-        # but the frontend should surface this rather than silently showing
-        # "Ready" for a document that will never appear in search results.
         warnings.append(
             "No extractable text was found in this PDF (it may be a scanned image). "
             "It was saved, but won't appear in search results until OCR support is added."
@@ -222,6 +223,8 @@ async def upload_document(
         chunks=[chunk.text for chunk in chunks],
         metadata=[chunk.metadata.model_dump() for chunk in chunks],
     )
+
+    file_url = f"/api/v1/documents/{document_id}/file"
 
     document_registry = request.app.state.document_registry
     await document_registry.initialize()
@@ -235,12 +238,10 @@ async def upload_document(
             "chunk_count": len(chunks),
             "file_size_bytes": len(file_bytes),
             "uploaded_at": datetime.now(timezone.utc),
+            "file_url": file_url,
         }
     )
 
-    # Persist the raw PDF in Cloudflare R2 so the citation viewer can fetch it
-    # via GET /api/v1/documents/{id}/file.  Non-fatal: failures are logged but
-    # the document remains searchable via Ahnlich.
     storage = getattr(request.app.state, "storage", None)
     if storage is not None:
         await storage.upload_pdf(document_id, file_bytes)
@@ -250,6 +251,7 @@ async def upload_document(
         user_id=current_user_id,
         document_name=resolved_document_name,
         source_type=payload.source_type,
+        file_url=file_url,
         pages=pages,
         chunks=chunks,
         warnings=warnings,
@@ -261,7 +263,22 @@ async def list_documents(request: Request, current_user_id: str = Depends(get_cu
     document_registry = request.app.state.document_registry
     await document_registry.initialize()
     documents = await document_registry.list_documents(user_id=current_user_id)
-    return DocumentListResponse(documents=[DocumentSummary(**doc) for doc in documents])
+    return DocumentListResponse(
+        documents=[
+            DocumentSummary(
+                document_id=doc["document_id"],
+                user_id=doc["user_id"],
+                document_name=doc["document_name"],
+                source_type=doc.get("source_type", "pdf"),
+                page_count=doc.get("page_count", 0),
+                chunk_count=doc.get("chunk_count", 0),
+                file_size_bytes=doc.get("file_size_bytes", 0),
+                uploaded_at=doc["uploaded_at"],
+                file_url=doc.get("file_url") or f"/api/v1/documents/{doc['document_id']}/file",
+            )
+            for doc in documents
+        ]
+    )
 
 
 @router.delete("/documents/{document_id}", response_model=DocumentDeleteResponse)
