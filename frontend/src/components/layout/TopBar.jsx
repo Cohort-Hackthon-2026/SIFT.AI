@@ -5,18 +5,18 @@ import ThemeToggle from "../theme/ThemeToggle";
 import ModeDropdown from "../theme/ModeDropdown";
 import Button from "../ui/Button";
 
-import { useAuth, useClerk, useUser } from "@clerk/react";
+import { useAuth } from "@clerk/react";
 import { useAuth as useLocalAuth } from "../../../store/auth";
 
 function TopBar({ sidebarOpen, onToggleSidebar }) {
   const { isLoaded, isSignedIn } = useAuth();
-  const { user } = useUser();
-  const { signOut } = useClerk();
-  const [accountOpen, setAccountOpen] = useState(false);
+  // const { user } = useUser();
+  // const { signOut } = useClerk();
+  // const [accountOpen, setAccountOpen] = useState(false);
   const accountRef = useRef(null);
   const openWelcome = useLocalAuth((state) => state.openWelcome);
-  const email = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || "";
-  const initials = email.slice(0, 2).toUpperCase();
+  // const email = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || "";
+  // const initials = email.slice(0, 2).toUpperCase();
 
   useEffect(() => {
     const close = (event) => !accountRef.current?.contains(event.target) && setAccountOpen(false);
@@ -63,7 +63,7 @@ function TopBar({ sidebarOpen, onToggleSidebar }) {
               Sign In
             </Button>
           )}
-          {isLoaded && isSignedIn && (
+          {/* {isLoaded && isSignedIn && (
             <div className="relative" ref={accountRef}>
               <button type="button" onClick={() => setAccountOpen((value) => !value)} className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-border bg-primary/10 text-sm font-semibold text-primary" aria-label="Open account menu">
                 {user?.imageUrl ? <img src={user.imageUrl} alt="" className="h-full w-full object-cover" /> : initials || <UserRound size={19} />}
@@ -75,7 +75,7 @@ function TopBar({ sidebarOpen, onToggleSidebar }) {
                 </div>
               )}
             </div>
-          )}
+          )} */}
 
           <ThemeToggle />
         </div>

@@ -23,7 +23,7 @@ function MessageBubble({ message }) {
                 )}
 
                 <div
-                    className={`max-w-full sm:max-w-[85%] rounded-3xl border p-4 sm:p-5 transition-colors ${
+                    className={`max-w-full sm:max-w-[85%] rounded-3xl border p-4 sm:p-5 transition-colors break-words ${
                         isUser
                             ? "bg-primary text-textInverse border-primary/40 shadow-md"
                             : message.error
@@ -81,7 +81,7 @@ function MessageBubble({ message }) {
             </div>
 
             {isUser && (
-                <div className="flex gap-2 sm:gap-3 justify-end mt-2">
+                <div className="flex gap-1 sm:gap-2 justify-end mt-1">
                     <ChatActions text={message.content} isCompact={true} />
                 </div>
             )}

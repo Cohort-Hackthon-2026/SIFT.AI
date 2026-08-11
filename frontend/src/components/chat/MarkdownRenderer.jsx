@@ -12,6 +12,9 @@ function MarkdownRenderer({
             <ReactMarkdown
                 remarkPlugins={[remarkGfm]}
                 components={{
+                    p({ children }) {
+                        return <p className="mt-4 first:mt-0 leading-7">{children}</p>;
+                    },
                     code({
                         inline,
                         className,
