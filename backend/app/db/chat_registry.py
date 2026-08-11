@@ -406,11 +406,14 @@ class PostgresChatRegistry:
         meta = row["metadata"]
         if isinstance(meta, str):
             meta = json.loads(meta)
+        content_val = row["content"]
+        if not isinstance(content_val, str):
+            content_val = json.dumps(content_val) if content_val is not None else ""
         return {
             "message_id": row["message_id"],
             "chat_id": row["chat_id"],
             "role": row["role"],
-            "content": row["content"],
+            "content": content_val,
             "metadata": meta or {},
             "created_at": row["created_at"].isoformat() if isinstance(row["created_at"], datetime) else str(row["created_at"]),
         }
