@@ -5,40 +5,43 @@ import CodeBlock from "./CodeBlock";
 
 function MarkdownRenderer({
     children,
+    className = "",
 }) {
     return (
-        <ReactMarkdown
-            remarkPlugins={[remarkGfm]}
-            components={{
-                code({
-                    inline,
-                    className,
-                    children,
-                }) {
-                    const match =
-                        /language-(\w+)/.exec(
-                            className || ""
-                        );
+        <div className={className}>
+            <ReactMarkdown
+                remarkPlugins={[remarkGfm]}
+                components={{
+                    code({
+                        inline,
+                        className,
+                        children,
+                    }) {
+                        const match =
+                            /language-(\w+)/.exec(
+                                className || ""
+                            );
 
-                    if (!inline && match) {
+                        if (!inline && match) {
+                            return (
+                                <CodeBlock
+                                    language={match[1]}
+                                    value={String(children)}
+                                />
+                            );
+                        }
+
                         return (
-                            <CodeBlock
-                                language={match[1]}
-                                value={String(children)}
-                            />
+                            <code className="rounded bg-background px-1 py-0.5 text-primary">
+                                {children}
+                            </code>
                         );
-                    }
-
-                    return (
-                        <code className="rounded bg-background px-1 py-0.5 text-primary">
-                            {children}
-                        </code>
-                    );
-                },
-            }}
-        >
-            {children}
-        </ReactMarkdown>
+                    },
+                }}
+            >
+                {children}
+            </ReactMarkdown>
+        </div>
     );
 }
 
