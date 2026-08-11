@@ -18,7 +18,7 @@ function ChatActions({ text, isCompact = false }) {
 
     if (isCompact) {
         return (
-            <div className="flex gap-1.5 bg-background px-2 py-1.5 rounded-lg">
+            <div className="flex gap-1 bg-background px-2 py-1.5 rounded-lg">
                 <button
                     onClick={() => navigator.clipboard.writeText(text)}
                     title="Copy response"
