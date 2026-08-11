@@ -1,4 +1,5 @@
-import { FileSearch2, PanelLeftOpen } from "lucide-react";
+import { FileSearch2, LogOut, PanelLeftOpen, UserRound } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 
 import ThemeToggle from "../theme/ThemeToggle";
 import ModeDropdown from "../theme/ModeDropdown";
@@ -9,7 +10,19 @@ import { useAuth as useLocalAuth } from "../../../store/auth";
 
 function TopBar({ sidebarOpen, onToggleSidebar }) {
   const { isLoaded, isSignedIn } = useAuth();
+  // const { user } = useUser();
+  // const { signOut } = useClerk();
+  // const [accountOpen, setAccountOpen] = useState(false);
+  const accountRef = useRef(null);
   const openWelcome = useLocalAuth((state) => state.openWelcome);
+  // const email = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || "";
+  // const initials = email.slice(0, 2).toUpperCase();
+
+  useEffect(() => {
+    const close = (event) => !accountRef.current?.contains(event.target) && setAccountOpen(false);
+    document.addEventListener("pointerdown", close);
+    return () => document.removeEventListener("pointerdown", close);
+  }, []);
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-surface/80 backdrop-blur-xl">
@@ -50,6 +63,19 @@ function TopBar({ sidebarOpen, onToggleSidebar }) {
               Sign In
             </Button>
           )}
+          {/* {isLoaded && isSignedIn && (
+            <div className="relative" ref={accountRef}>
+              <button type="button" onClick={() => setAccountOpen((value) => !value)} className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-border bg-primary/10 text-sm font-semibold text-primary" aria-label="Open account menu">
+                {user?.imageUrl ? <img src={user.imageUrl} alt="" className="h-full w-full object-cover" /> : initials || <UserRound size={19} />}
+              </button>
+              {accountOpen && (
+                <div className="absolute right-0 mt-2 w-72 rounded-2xl border border-border bg-surface p-3 shadow-xl">
+                  <p className="truncate px-2 py-2 text-sm font-medium text-text">{email}</p>
+                  <button type="button" onClick={() => signOut()} className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-textMuted hover:bg-background hover:text-text"><LogOut size={16} /> Sign out</button>
+                </div>
+              )}
+            </div>
+          )} */}
 
           <ThemeToggle />
         </div>

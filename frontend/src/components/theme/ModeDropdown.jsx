@@ -1,9 +1,12 @@
 import { ChevronDown, Check, Zap } from "lucide-react";
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
+import { useAuth } from "@clerk/react";
 import { useSettings } from "../../../store/settings";
 
 function ModeDropdown() {
     const [open, setOpen] = useState(false);
+    const rootRef = useRef(null);
+    const { isSignedIn } = useAuth();
 
     const mode = useSettings((s) => s.mode);
     const modes = useSettings((s) => s.modes);
@@ -13,8 +16,16 @@ function ModeDropdown() {
         (item) => item.value === mode
     );
 
+    useEffect(() => {
+        const close = (event) => {
+            if (!rootRef.current?.contains(event.target)) setOpen(false);
+        };
+        document.addEventListener("pointerdown", close);
+        return () => document.removeEventListener("pointerdown", close);
+    }, []);
+
     return (
-        <div className="relative">
+        <div className="relative" ref={rootRef}>
             <button
                 onClick={() => setOpen(!open)}
                 className={`flex h-11 items-center gap-2 rounded-xl border px-4 text-sm font-medium transition-all duration-200 ${
@@ -43,6 +54,11 @@ function ModeDropdown() {
                         <button
                             key={item.value}
                             onClick={() => {
+                                if (item.value === "enhanced" && !isSignedIn) {
+                                    window.addToast?.("Please sign in to use Enhanced mode.", "info", 4000);
+                                    setOpen(false);
+                                    return;
+                                }
                                 setMode(item.value);
                                 setOpen(false);
                             }}

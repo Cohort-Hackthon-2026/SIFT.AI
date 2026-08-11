@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
 import ActionBar from "./ActionBar";
 import FileChip from "./FileChip";
@@ -10,6 +10,8 @@ import { useSettings } from "../../../store/settings";
 
 function PromptInput() {
   const textareaRef = useRef(null);
+  const cursorRef = useRef(0);
+  const interimRangeRef = useRef(null);
   const [showModeWarning, setShowModeWarning] = useState(false);
 
   const input = useChat((state) => state.input);
@@ -19,7 +21,9 @@ function PromptInput() {
   const error = useChat((state) => state.error);
 
   const files = useUpload((state) => state.files);
+  const clearFiles = useUpload((state) => state.clearFiles);
   const mode = useSettings((state) => state.mode);
+  const uploading = files.some((file) => file.status === "processing" || file.status === "selected");
 
   const resize = () => {
     const textarea = textareaRef.current;
@@ -28,6 +32,24 @@ function PromptInput() {
     textarea.style.height = "auto";
     textarea.style.height = `${Math.min(textarea.scrollHeight, 180)}px`;
   };
+
+  useEffect(() => {
+    const insertTranscript = (event) => {
+      const text = event.detail?.text || "";
+      const current = useChat.getState().input;
+      const range = event.detail?.replaceInterim && interimRangeRef.current
+        ? interimRangeRef.current
+        : { start: cursorRef.current, end: cursorRef.current };
+      const next = `${current.slice(0, range.start)}${text}${current.slice(range.end)}`;
+      setInput(next);
+      const end = range.start + text.length;
+      cursorRef.current = end;
+      interimRangeRef.current = event.detail?.replaceInterim ? { start: range.start, end } : null;
+      requestAnimationFrame(() => textareaRef.current?.setSelectionRange(end, end));
+    };
+    window.addEventListener("voice-transcript", insertTranscript);
+    return () => window.removeEventListener("voice-transcript", insertTranscript);
+  }, [setInput]);
 
   const handleSend = async () => {
     if (!mode) {
@@ -38,8 +60,13 @@ function PromptInput() {
     if (!input.trim() || isSending) {
       return;
     }
+    if (uploading) {
+      window.addToast?.("Please wait until all documents finish uploading.", "info", 4000);
+      return;
+    }
 
     await sendMessage(input);
+    clearFiles();
   };
 
   const onKeyDown = (event) => {
@@ -66,6 +93,7 @@ function PromptInput() {
           value={input}
           onInput={resize}
           onChange={(event) => setInput(event.target.value)}
+          onSelect={(event) => { cursorRef.current = event.currentTarget.selectionStart; interimRangeRef.current = null; }}
           onKeyDown={onKeyDown}
           placeholder="Ask Sift AI anything..."
           className="max-h-44 min-h-[28px] w-full resize-none bg-transparent text-text text-sm sm:text-base placeholder:text-textMuted outline-none"
