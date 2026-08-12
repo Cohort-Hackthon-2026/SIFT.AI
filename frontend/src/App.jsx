@@ -10,6 +10,7 @@ import { applyThemeColors } from "../utils/Colors";
 
 import Chat from "./Pages/Chat";
 import NotFound from "./Pages/NotFound";
+import Settings from "./Pages/Settings";
 
 import AuthModal from "./components/auth/AuthModal";
 import AuthBridge from "./components/auth/AuthBridge";
@@ -58,6 +59,7 @@ function App() {
         <AuthBridge />
         <Routes>
           <Route path="/" element={<Chat />} />
+          <Route path="/settings" element={<Settings />} />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>

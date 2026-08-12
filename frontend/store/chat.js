@@ -52,6 +52,7 @@ const chatStore = (set, get) => ({
   chats: [],
   activeChatId: null,
   isLoadingChats: false,
+  isLoadingMessages: false,
   isSending: false,
   streamStatus: "",
   streamProgress: 0,
@@ -114,7 +115,7 @@ const chatStore = (set, get) => ({
   },
 
   selectChat: async (chatId) => {
-    set({ activeChatId: chatId, messages: [], error: null });
+    set({ activeChatId: chatId, messages: [], error: null, isLoadingMessages: true });
 
     try {
       const response = await api.listChatMessages(chatId);
@@ -122,6 +123,8 @@ const chatStore = (set, get) => ({
     } catch (err) {
       set({ error: err.message });
       throw err;
+    } finally {
+      set({ isLoadingMessages: false });
     }
   },
 

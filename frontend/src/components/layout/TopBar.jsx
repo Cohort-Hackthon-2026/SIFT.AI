@@ -1,5 +1,4 @@
-import { FileSearch2, LogOut, PanelLeftOpen, UserRound } from "lucide-react";
-import { useEffect, useRef, useState } from "react";
+import { FileSearch2, PanelLeftOpen } from "lucide-react";
 
 import ThemeToggle from "../theme/ThemeToggle";
 import ModeDropdown from "../theme/ModeDropdown";
@@ -13,16 +12,9 @@ function TopBar({ sidebarOpen, onToggleSidebar }) {
   // const { user } = useUser();
   // const { signOut } = useClerk();
   // const [accountOpen, setAccountOpen] = useState(false);
-  const accountRef = useRef(null);
   const openWelcome = useLocalAuth((state) => state.openWelcome);
   // const email = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || "";
   // const initials = email.slice(0, 2).toUpperCase();
-
-  useEffect(() => {
-    const close = (event) => !accountRef.current?.contains(event.target) && setAccountOpen(false);
-    document.addEventListener("pointerdown", close);
-    return () => document.removeEventListener("pointerdown", close);
-  }, []);
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-surface/80 backdrop-blur-xl">

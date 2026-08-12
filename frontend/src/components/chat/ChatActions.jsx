@@ -3,18 +3,21 @@ import {
     Volume2,
     VolumeX,
 } from "lucide-react";
-import { useSpeech } from "react-text-to-speech";
+import { useEffect, useState } from "react";
 
 import IconButton from "../ui/IconButton";
+import { useSettings } from "../../../store/settings";
+import { speakText } from "../../lib/speech";
 
 function ChatActions({ text, isCompact = false }) {
-    const { speechStatus, start, stop } = useSpeech({
-        text,
-        lang: "en-US",
-        rate: 1,
-        stableText: true,
-    });
-    const isSpeaking = speechStatus === "started" || speechStatus === "paused" || speechStatus === "queued";
+    const [isSpeaking, setIsSpeaking] = useState(false);
+    const selectedVoice = useSettings((state) => state.voice);
+    const voices = useSettings((state) => state.voices);
+    const profile = voices.find((voice) => voice.value === selectedVoice) || voices[0];
+    const stop = () => { window.speechSynthesis?.cancel(); setIsSpeaking(false); };
+    const start = () => { setIsSpeaking(true); speakText(text, selectedVoice, profile, () => setIsSpeaking(false)); };
+
+    useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
     if (isCompact) {
         return (

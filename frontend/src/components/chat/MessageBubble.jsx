@@ -1,5 +1,4 @@
 import { Bot } from "lucide-react";
-import { useUser } from "@clerk/react";
 
 import CitationBadge from "./CitationBadge";
 import MarkdownRenderer from "./MarkdownRenderer";
@@ -7,8 +6,6 @@ import ChatActions from "./ChatActions";
 
 function MessageBubble({ message }) {
     const isUser = message.role === "user";
-    const { user } = useUser();
-    const email = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || "";
 
     return (
         <>

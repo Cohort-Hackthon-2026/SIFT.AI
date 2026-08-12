@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
-import { Plus, MessageSquare, PanelLeftClose } from "lucide-react";
+import { Plus, MessageSquare, PanelLeftClose, Settings } from "lucide-react";
+import { useNavigate } from "react-router-dom";
 import { useAuth, useClerk, useUser } from "@clerk/react";
 
 import Button from "../ui/Button";
@@ -11,6 +12,7 @@ import { useDocuments } from "../../../store/documents";
 
 function Sidebar({ isOpen, onClose }) {
   const [isSigningOut, setIsSigningOut] = useState(false);
+  const navigate = useNavigate();
 
   const { isSignedIn } = useAuth();
   const { signOut } = useClerk();
@@ -41,11 +43,14 @@ function Sidebar({ isOpen, onClose }) {
       useChat.getState().setActiveChatId(null);
       useChat.getState().clearMessages();
       useChat.getState().setInput("");
+      navigate("/");
       onClose?.();
       return;
     }
     try {
       await createNewChat("New Research Chat");
+      navigate("/");
+      onClose?.();
     } catch {
       // error handled in store
     }
@@ -114,6 +119,7 @@ function Sidebar({ isOpen, onClose }) {
                   chat={chat}
                   isActive={chat.chat_id === activeChatId}
                   onSelect={() => {
+                    navigate("/");
                     void selectChat(chat.chat_id);
                     onClose?.();
                   }}
@@ -138,6 +144,18 @@ function Sidebar({ isOpen, onClose }) {
               {error}
             </p>
           )}
+
+        </div>
+
+        <div className="shrink-0 border-t border-border bg-surface/95 px-4 py-2 backdrop-blur-xl">
+          <button
+            type="button"
+            onClick={() => { navigate("/settings"); onClose?.(); }}
+            className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-textMuted transition hover:bg-background hover:text-text"
+          >
+            <Settings size={18} />
+            Settings
+          </button>
         </div>
 
         {isSignedIn && <SidebarFooter email={email} imageUrl={user?.imageUrl} onLogout={handleLogout} isSigningOut={isSigningOut} />}
