@@ -26,6 +26,7 @@ class ChatRegistryProtocol(Protocol):
         title: str = "New Research Chat",
         mode: str = "STRICT",
         document_ids: list[str] | None = None,
+        matter_id: str | None = None,
     ) -> dict[str, Any]: ...
 
     async def list_chats(self, user_id: str) -> list[dict[str, Any]]: ...
@@ -42,6 +43,14 @@ class ChatRegistryProtocol(Protocol):
     ) -> dict[str, Any] | None: ...
 
     async def delete_chat(self, chat_id: str, user_id: str) -> bool: ...
+
+    async def set_chat_matter(
+        self, chat_id: str, user_id: str, matter_id: str | None
+    ) -> dict[str, Any] | None: ...
+
+    async def list_chats_by_matter(
+        self, matter_id: str, user_id: str | None = None
+    ) -> list[dict[str, Any]]: ...
 
     async def add_message(
         self,
@@ -70,6 +79,7 @@ class InMemoryChatRegistry:
         title: str = "New Research Chat",
         mode: str = "STRICT",
         document_ids: list[str] | None = None,
+        matter_id: str | None = None,
     ) -> dict[str, Any]:
         chat_id = str(uuid4())
         now = datetime.now(timezone.utc).isoformat()
@@ -79,6 +89,7 @@ class InMemoryChatRegistry:
             "title": title or "New Research Chat",
             "mode": mode.upper() if mode else "STRICT",
             "document_ids": document_ids or [],
+            "matter_id": matter_id,
             "created_at": now,
             "updated_at": now,
         }
@@ -127,6 +138,24 @@ class InMemoryChatRegistry:
         self._chats.pop(chat_id, None)
         self._messages.pop(chat_id, None)
         return True
+
+    async def set_chat_matter(
+        self, chat_id: str, user_id: str, matter_id: str | None
+    ) -> dict[str, Any] | None:
+        chat = await self.get_chat(chat_id, user_id=user_id)
+        if not chat:
+            return None
+        chat["matter_id"] = matter_id
+        chat["updated_at"] = datetime.now(timezone.utc).isoformat()
+        return chat
+
+    async def list_chats_by_matter(
+        self, matter_id: str, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        chats = [c for c in self._chats.values() if c.get("matter_id") == matter_id]
+        if user_id is not None:
+            chats = [c for c in chats if c.get("user_id") == user_id]
+        return sorted(chats, key=lambda c: c["updated_at"], reverse=True)
 
     async def add_message(
         self,
@@ -201,10 +230,14 @@ class PostgresChatRegistry:
                         title TEXT NOT NULL,
                         mode TEXT NOT NULL DEFAULT 'STRICT',
                         document_ids JSONB NOT NULL DEFAULT '[]'::jsonb,
+                        matter_id TEXT,
                         created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
                         updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
                     );
                     CREATE INDEX IF NOT EXISTS idx_chats_user_id ON chats(user_id);
+                    -- Existing deployments predating matters: add the column in place.
+                    ALTER TABLE chats ADD COLUMN IF NOT EXISTS matter_id TEXT;
+                    CREATE INDEX IF NOT EXISTS idx_chats_matter_id ON chats(matter_id);
 
                     CREATE TABLE IF NOT EXISTS messages (
                         message_id TEXT PRIMARY KEY,
@@ -227,6 +260,7 @@ class PostgresChatRegistry:
         title: str = "New Research Chat",
         mode: str = "STRICT",
         document_ids: list[str] | None = None,
+        matter_id: str | None = None,
     ) -> dict[str, Any]:
         chat_id = str(uuid4())
         now = datetime.now(timezone.utc)
@@ -237,15 +271,16 @@ class PostgresChatRegistry:
         async with pool.acquire() as conn:
             row = await conn.fetchrow(
                 """
-                INSERT INTO chats (chat_id, user_id, title, mode, document_ids, created_at, updated_at)
-                VALUES ($1, $2, $3, $4, $5::jsonb, $6, $6)
-                RETURNING chat_id, user_id, title, mode, document_ids, created_at, updated_at
+                INSERT INTO chats (chat_id, user_id, title, mode, document_ids, matter_id, created_at, updated_at)
+                VALUES ($1, $2, $3, $4, $5::jsonb, $6, $7, $7)
+                RETURNING chat_id, user_id, title, mode, document_ids, matter_id, created_at, updated_at
                 """,
                 chat_id,
                 user_id,
                 title,
                 mode_val,
                 doc_json,
+                matter_id,
                 now,
             )
             return self._row_to_chat(row)
@@ -255,7 +290,7 @@ class PostgresChatRegistry:
         async with pool.acquire() as conn:
             rows = await conn.fetch(
                 """
-                SELECT chat_id, user_id, title, mode, document_ids, created_at, updated_at
+                SELECT chat_id, user_id, title, mode, document_ids, matter_id, created_at, updated_at
                 FROM chats
                 WHERE user_id = $1
                 ORDER BY updated_at DESC
@@ -270,7 +305,7 @@ class PostgresChatRegistry:
             if user_id is not None:
                 row = await conn.fetchrow(
                     """
-                    SELECT chat_id, user_id, title, mode, document_ids, created_at, updated_at
+                    SELECT chat_id, user_id, title, mode, document_ids, matter_id, created_at, updated_at
                     FROM chats
                     WHERE chat_id = $1 AND user_id = $2
                     """,
@@ -280,7 +315,7 @@ class PostgresChatRegistry:
             else:
                 row = await conn.fetchrow(
                     """
-                    SELECT chat_id, user_id, title, mode, document_ids, created_at, updated_at
+                    SELECT chat_id, user_id, title, mode, document_ids, matter_id, created_at, updated_at
                     FROM chats
                     WHERE chat_id = $1
                     """,
@@ -312,7 +347,7 @@ class PostgresChatRegistry:
                 UPDATE chats
                 SET title = $1, mode = $2, document_ids = $3::jsonb, updated_at = $4
                 WHERE chat_id = $5 AND user_id = $6
-                RETURNING chat_id, user_id, title, mode, document_ids, created_at, updated_at
+                RETURNING chat_id, user_id, title, mode, document_ids, matter_id, created_at, updated_at
                 """,
                 new_title,
                 new_mode,
@@ -332,6 +367,54 @@ class PostgresChatRegistry:
                 user_id,
             )
             return result.endswith("1")
+
+    async def set_chat_matter(
+        self, chat_id: str, user_id: str, matter_id: str | None
+    ) -> dict[str, Any] | None:
+        now = datetime.now(timezone.utc)
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            row = await conn.fetchrow(
+                """
+                UPDATE chats
+                SET matter_id = $1, updated_at = $2
+                WHERE chat_id = $3 AND user_id = $4
+                RETURNING chat_id, user_id, title, mode, document_ids, matter_id, created_at, updated_at
+                """,
+                matter_id,
+                now,
+                chat_id,
+                user_id,
+            )
+            return self._row_to_chat(row) if row else None
+
+    async def list_chats_by_matter(
+        self, matter_id: str, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        pool = await self._get_pool()
+        async with pool.acquire() as conn:
+            if user_id is not None:
+                rows = await conn.fetch(
+                    """
+                    SELECT chat_id, user_id, title, mode, document_ids, matter_id, created_at, updated_at
+                    FROM chats
+                    WHERE matter_id = $1 AND user_id = $2
+                    ORDER BY updated_at DESC
+                    """,
+                    matter_id,
+                    user_id,
+                )
+            else:
+                rows = await conn.fetch(
+                    """
+                    SELECT chat_id, user_id, title, mode, document_ids, matter_id, created_at, updated_at
+                    FROM chats
+                    WHERE matter_id = $1
+                    ORDER BY updated_at DESC
+                    """,
+                    matter_id,
+                )
+            return [self._row_to_chat(row) for row in rows]
 
     async def add_message(
         self,
@@ -397,6 +480,7 @@ class PostgresChatRegistry:
             "title": row["title"],
             "mode": row["mode"],
             "document_ids": doc_ids or [],
+            "matter_id": row["matter_id"] if "matter_id" in row.keys() else None,
             "created_at": row["created_at"].isoformat() if isinstance(row["created_at"], datetime) else str(row["created_at"]),
             "updated_at": row["updated_at"].isoformat() if isinstance(row["updated_at"], datetime) else str(row["updated_at"]),
         }

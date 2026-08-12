@@ -6,12 +6,24 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes.audio import router as audio_router
+from app.api.routes.audit import router as audit_router
+from app.api.routes.billing import router as billing_router
+from app.api.routes.chambers import router as chambers_router
 from app.api.routes.chat import router as chat_router
 from app.api.routes.chats import router as chats_router
 from app.api.routes.documents import router as documents_router
+from app.api.routes.exports import router as exports_router
 from app.api.routes.health import router as health_router
+from app.api.routes.matters import router as matters_router
+from app.api.routes.me import router as me_router
+from app.api.routes.privacy import router as privacy_router
 from app.config import get_settings
+from app.db.audit_registry import create_audit_registry
+from app.db.billing_registry import create_billing_registry
+from app.db.chambers_registry import create_chambers_registry
 from app.db.chat_registry import create_chat_registry
+from app.db.matter_registry import create_matter_registry
+from app.db.profile_registry import create_profile_registry
 from app.db.registry import create_document_registry
 from app.services.cache import create_search_cache
 from app.services.storage import create_storage_service
@@ -38,6 +50,24 @@ async def lifespan(app: FastAPI):
     # Initialize the chat registry for managing chat sessions & message histories
     app.state.chat_registry = create_chat_registry()
     await app.state.chat_registry.initialize()
+
+    # Platform registries (BE2, plan §6): profiles, chambers/teams, matters,
+    # billing/usage meter, and the audit trail. Each is Postgres-backed when
+    # DATABASE_URL is set, else an in-memory fallback so the API boots locally.
+    app.state.profile_registry = create_profile_registry()
+    await app.state.profile_registry.initialize()
+
+    app.state.chambers_registry = create_chambers_registry()
+    await app.state.chambers_registry.initialize()
+
+    app.state.matter_registry = create_matter_registry()
+    await app.state.matter_registry.initialize()
+
+    app.state.billing_registry = create_billing_registry()
+    await app.state.billing_registry.initialize()
+
+    app.state.audit_registry = create_audit_registry()
+    await app.state.audit_registry.initialize()
 
     # Initialize the search-result cache (Redis if REDIS_URL is set,
     # otherwise a no-op cache).
@@ -76,3 +106,11 @@ app.include_router(documents_router)
 app.include_router(audio_router)
 app.include_router(chat_router)
 app.include_router(chats_router)
+# Platform routes (BE2, plan §6).
+app.include_router(me_router)
+app.include_router(privacy_router)
+app.include_router(matters_router)
+app.include_router(chambers_router)
+app.include_router(exports_router)
+app.include_router(billing_router)
+app.include_router(audit_router)
