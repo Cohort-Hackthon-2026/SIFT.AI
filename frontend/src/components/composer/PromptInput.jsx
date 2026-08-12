@@ -9,6 +9,7 @@ import { useUpload } from "../../../store/upload";
 import { useSettings } from "../../../store/settings";
 
 function PromptInput() {
+  const composerRef = useRef(null);
   const textareaRef = useRef(null);
   const cursorRef = useRef(0);
   const interimRangeRef = useRef(null);
@@ -51,6 +52,23 @@ function PromptInput() {
     return () => window.removeEventListener("voice-transcript", insertTranscript);
   }, [setInput]);
 
+  useEffect(() => {
+    const composer = composerRef.current;
+    if (!composer) return undefined;
+
+    const updateComposerHeight = () => {
+      document.documentElement.style.setProperty("--composer-height", `${composer.offsetHeight}px`);
+    };
+    const observer = new ResizeObserver(updateComposerHeight);
+    observer.observe(composer);
+    updateComposerHeight();
+
+    return () => {
+      observer.disconnect();
+      document.documentElement.style.removeProperty("--composer-height");
+    };
+  }, []);
+
   const handleSend = async () => {
     if (!mode) {
       setShowModeWarning(true);
@@ -77,7 +95,7 @@ function PromptInput() {
   };
 
   return (
-    <div className="sticky bottom-0 mt-auto bg-gradient-to-t from-background via-background to-transparent pt-4 px-3 sm:px-0">
+    <div ref={composerRef} className="sticky bottom-0 mt-auto bg-gradient-to-t from-background via-background to-transparent pt-4 px-3 sm:px-0">
       <div className="mx-auto w-full max-w-4xl rounded-3xl border border-border bg-surface p-4 shadow-lg">
         {files.length > 0 && (
           <div className="mb-4 flex flex-wrap gap-2">

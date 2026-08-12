@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Check, Play, Settings2, Square } from "lucide-react";
+import { Circle, CircleCheck, Play, Settings2, Square } from "lucide-react";
 
 import MainLayout from "../components/layout/MainLayout";
 import { useSettings } from "../../store/settings";
@@ -50,12 +50,14 @@ function Settings() {
               const playing = previewing === voice.value;
               return (
                 <div key={voice.value} className={`flex min-w-0 items-center gap-3 rounded-2xl border p-3 transition sm:p-4 ${selected ? "border-primary bg-primary/10" : "border-border bg-background/60 hover:border-primary/50"}`}>
-                  <button type="button" onClick={() => setVoice(voice.value)} className="min-w-0 flex-1 text-left" aria-pressed={selected}>
-                    <span className="flex items-center gap-2 font-semibold text-text">
-                      {voice.label}
-                      {selected && <Check size={17} className="text-primary" />}
+                  <button type="button" onClick={() => setVoice(voice.value)} className="flex min-w-0 flex-1 items-start gap-3 text-left" aria-pressed={selected}>
+                    <span className="mt-0.5 shrink-0 text-primary" aria-hidden="true">
+                      {selected ? <CircleCheck size={21} fill="currentColor" className="text-primary [&>path:last-child]:text-textInverse" /> : <Circle size={21} className="text-textMuted" />}
                     </span>
-                    <span className="mt-1 block text-sm text-textMuted">{voice.description}</span>
+                    <span className="min-w-0">
+                      <span className="block font-semibold text-text">{voice.label}</span>
+                      <span className="mt-1 block text-sm text-textMuted">{voice.description}</span>
+                    </span>
                   </button>
                   <button type="button" onClick={() => preview(voice)} className="flex h-11 w-11 shrink-0 items-center justify-center rounded-xl border border-border bg-surface text-primary transition hover:border-primary hover:bg-primary/10" aria-label={`${playing ? "Stop" : "Play"} ${voice.label} voice preview`}>
                     {playing ? <Square size={17} fill="currentColor" /> : <Play size={18} fill="currentColor" />}

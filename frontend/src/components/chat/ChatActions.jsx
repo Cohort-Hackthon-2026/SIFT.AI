@@ -16,6 +16,14 @@ function ChatActions({ text, isCompact = false }) {
     const profile = voices.find((voice) => voice.value === selectedVoice) || voices[0];
     const stop = () => { window.speechSynthesis?.cancel(); setIsSpeaking(false); };
     const start = () => { setIsSpeaking(true); speakText(text, selectedVoice, profile, () => setIsSpeaking(false)); };
+    const copyText = async () => {
+        try {
+            await navigator.clipboard.writeText(text);
+            window.addToast?.("Copied to clipboard.", "success");
+        } catch {
+            window.addToast?.("Could not copy the text. Please try again.", "error", 4000);
+        }
+    };
 
     useEffect(() => () => window.speechSynthesis?.cancel(), []);
 
@@ -23,7 +31,7 @@ function ChatActions({ text, isCompact = false }) {
         return (
             <div className="flex gap-1 bg-background px-2 py-1.5 rounded-lg">
                 <button
-                    onClick={() => navigator.clipboard.writeText(text)}
+                    onClick={copyText}
                     title="Copy response"
                     aria-label="Copy response"
                     className="flex h-8 w-8 items-center justify-center rounded-lg text-text transition-all hover:bg-surface"
@@ -49,7 +57,7 @@ function ChatActions({ text, isCompact = false }) {
 
             <IconButton
                 icon={Copy}
-                onClick={() => navigator.clipboard.writeText(text)}
+                onClick={copyText}
                 title="Copy response"
                 aria-label="Copy response"
             />
