@@ -432,3 +432,292 @@ export async function transcribeAudioBlob(audioBlob, getToken) {
 | `400 Bad Request` | Empty query or malformed body | Show toast notification "Query cannot be empty". |
 | `422 Unprocessable` | Double stringified JSON payload | Ensure body is `JSON.stringify(object)`, NOT `JSON.stringify(string)`. |
 | `503 Unavailable` | Storage or Ahnlich unreachable | Display warning banner "Running in degraded vector mode". |
+
+---
+
+# Part II — Platform, Teams, Billing & Compliance (BE2)
+
+> This part covers the **BE2** surface: user profiles, chambers (team accounts), matters (case workspaces), chat export, billing/usage, NDPA privacy, and the audit log. Everything here uses the **same** Clerk Bearer auth and `fetchWithAuth` client from Part I §4, unless a route is explicitly marked **public** or **webhook**.
+>
+> The single most important new concept for the FE is the **tier gate**: some actions return **HTTP 402 (Payment Required)** with a structured upgrade hint. 402 is distinct from 401 (not signed in) and 403 (signed in, but not allowed). Treat 402 as "route to the upgrade screen", never as an error toast.
+
+## 8. Tiers & Entitlements (read this first)
+
+The effective plan for a user is their **chambers' `subscription_tier`**, or `FREE` if they aren't in a chambers. Billing is **per-chambers, not per-seat**.
+
+| Capability | FREE | STARTER | PRO | ENTERPRISE |
+| --- | --- | --- | --- | --- |
+| Query mode | Strict only | Strict + Enhanced | Strict + Enhanced | Strict + Enhanced |
+| Export formats | PDF | PDF, DOCX | PDF, DOCX, PPTX | PDF, DOCX, PPTX |
+| Chambers (teams) | ❌ | ✅ | ✅ | ✅ |
+| Audit log | ❌ | ❌ | ✅ | ✅ |
+| Data residency | ❌ | ❌ | ❌ | ✅ |
+| Max members | 1 | 5 | 25 | Unlimited |
+| Monthly QUERY quota | 50 | 500 | 5,000 | Unlimited |
+| Monthly DOC_UPLOAD quota | 20 | 200 | 2,000 | Unlimited |
+| Monthly EXPORT quota | 5 | 100 | 1,000 | Unlimited |
+| Monthly AUDIO_MIN quota | 30 | 300 | 3,000 | Unlimited |
+
+**A quota `limit` of `null` means unlimited.** Prices are Enterprise-quoted (contact sales); self-serve tiers are STARTER (₦15,000/mo) and PRO (₦60,000/mo).
+
+### The 402 upgrade envelope
+
+Every tier-gated 402 returns this exact `detail` shape — build one handler for all of them:
+
+```typescript
+export interface UpgradeRequiredDetail {
+  message: string;          // human-readable, safe to show
+  current_tier: "FREE" | "STARTER" | "PRO" | "ENTERPRISE";
+  upgrade_required: "STARTER" | "PRO" | null; // the minimum tier that unblocks the action
+}
+// FastAPI wraps it: the response body is { detail: UpgradeRequiredDetail }
+```
+
+```javascript
+// Centralised handler — call this from your fetch wrapper's error branch.
+export function handleTierGate(status, body, { openUpgradeModal }) {
+  if (status === 402) {
+    const d = body.detail;
+    openUpgradeModal({ reason: d.message, target: d.upgrade_required, current: d.current_tier });
+    return true; // handled
+  }
+  return false;
+}
+```
+
+## 9. BE2 TypeScript Definitions
+
+```typescript
+// --- Profile (§10) ---
+export type LegalRole = "PRINCIPAL" | "PARTNER" | "ASSOCIATE" | "TRAINEE" | "LAW_STUDENT" | "SAN";
+export interface Profile {
+  user_id: string;
+  role: LegalRole;
+  nba_number: string | null;
+  chambers_id: string | null;
+  default_jurisdiction: string;   // e.g. "NG"
+  onboarded_at: string;           // ISO
+  updated_at: string;             // ISO
+}
+
+// --- Chambers (§11) ---
+export type MemberRole = "PRINCIPAL" | "PARTNER" | "ASSOCIATE" | "TRAINEE";
+export type Tier = "FREE" | "STARTER" | "PRO" | "ENTERPRISE";
+export interface Chambers {
+  chambers_id: string;
+  name: string;
+  subscription_tier: Tier;
+  invite_code?: string;           // present only for PRINCIPAL/PARTNER
+  created_at: string;
+  updated_at: string;
+}
+export interface ChambersWithRole extends Chambers { my_role: MemberRole | null; }
+export interface Membership { chambers_id: string; user_id: string; role: MemberRole; joined_at: string; }
+export interface ChambersDetail extends Chambers { my_role: MemberRole; members: Membership[]; }
+
+// --- Matters (§12) ---
+export type PracticeArea =
+  | "LITIGATION" | "CORPORATE" | "PROPERTY" | "ENERGY" | "FAMILY"
+  | "CRIMINAL" | "IP" | "TAX" | "EMPLOYMENT" | "OTHER";
+export type MatterStatus = "OPEN" | "CLOSED" | "ARCHIVED";
+export interface Matter {
+  matter_id: string;
+  chambers_id: string | null;
+  created_by_user_id: string;
+  title: string;
+  client_name: string | null;
+  practice_area: PracticeArea;
+  jurisdiction: string;
+  status: MatterStatus;
+  created_at: string;
+  updated_at: string;
+}
+export interface MatterWorkspace { matter: Matter; documents: DocumentRecord[]; chats: ChatSession[]; }
+
+// --- Billing (§14) ---
+export interface QuotaUsage { used: number; limit: number | null; remaining: number | null; }
+export interface PlanResponse {
+  tier: Tier;
+  chambers_id: string | null;
+  entitlements: Record<string, unknown>;
+  usage: { period_start: string; quotas: Record<"QUERY"|"DOC_UPLOAD"|"EXPORT"|"AUDIO_MIN", QuotaUsage> };
+  plans: Record<Tier, { amount_kobo: number | null; currency: string; self_serve: boolean; label: string; blurb: string }>;
+}
+export interface CheckoutResponse {
+  provider: "paystack" | "mock";
+  reference: string;
+  tier: Tier;
+  amount_kobo: number | null;
+  currency: string;
+  authorization_url: string | null;   // redirect here when provider === "paystack"
+  access_code?: string;
+}
+
+// --- Audit (§16) ---
+export interface AuditEntry {
+  id: string; chambers_id: string | null; user_id: string; action: string;
+  matter_id: string | null; detail: Record<string, unknown>; created_at: string;
+}
+```
+
+## 10. User Profile — `/api/v1/me`
+
+The FE should call `GET /api/v1/me/profile` right after sign-in; it **lazily creates** a default profile (role `ASSOCIATE`, jurisdiction `NG`, no chambers) so onboarding always has a row to edit.
+
+| Method & Route | Request | Response | Notes |
+| --- | --- | --- | --- |
+| `GET /api/v1/me/profile` | — | `Profile` | Lazily creates on first call. |
+| `PUT /api/v1/me/profile` | `{ role?, nba_number?, default_jurisdiction? }` | `Profile` | `role` must be a `LegalRole` (else 422). Values are upper-cased server-side. |
+
+> **Do not** set `chambers_id` here — it's read-only on the profile and is managed exclusively through the chambers create/join/leave flows (§11) so it stays consistent with the memberships table.
+
+```javascript
+export const getMyProfile = (getToken) => fetchWithAuth("/api/v1/me/profile", {}, getToken);
+export const updateMyProfile = (patch, getToken) => fetchWithAuth("/api/v1/me/profile", {
+  method: "PUT", headers: { "Content-Type": "application/json" }, body: JSON.stringify(patch),
+}, getToken);
+```
+
+## 11. Chambers (Team Accounts) — `/api/v1/chambers`
+
+Creating a chambers makes the caller its founding **PRINCIPAL** and mints an **invite code**. Others join with that code. Seat count is capped by the chambers' tier (FREE = solo).
+
+| Method & Route | Request | Response | Notes |
+| --- | --- | --- | --- |
+| `POST /api/v1/chambers` | `{ name }` | `Chambers` (201) | Caller becomes PRINCIPAL; their `profile.chambers_id` is synced. |
+| `GET /api/v1/chambers` | — | `{ chambers: ChambersWithRole[] }` | The caller's chambers with their role in each. |
+| `POST /api/v1/chambers/join` | `{ invite_code }` | `{ chambers, membership }` | **404** invalid code; **402** if the seat limit is reached (upgrade envelope). |
+| `GET /api/v1/chambers/{id}` | — | `ChambersDetail` | **404** if not a member. `invite_code` present only for PRINCIPAL/PARTNER. |
+| `GET /api/v1/chambers/{id}/members` | — | `{ members: Membership[] }` | Any member. |
+| `PATCH /api/v1/chambers/{id}/members/{userId}` | `{ role }` | `Membership` | **403** unless caller is PRINCIPAL; **422** invalid role; **404** target not a member. |
+| `DELETE /api/v1/chambers/{id}/members/{userId}` | — | `{ removed: true }` | A member may remove themselves (leave); only a PRINCIPAL may remove others (**403** otherwise). Clears the removed user's `profile.chambers_id`. |
+
+```javascript
+export const createChambers = (name, getToken) => fetchWithAuth("/api/v1/chambers", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ name }),
+}, getToken);
+
+export const joinChambers = (invite_code, getToken) => fetchWithAuth("/api/v1/chambers/join", {
+  method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ invite_code }),
+}, getToken); // catch 402 -> upgrade modal, 404 -> "invalid code" toast
+```
+
+## 12. Matters (Case Workspaces) — `/api/v1/matters`
+
+A matter groups documents + research chats under one case. Visibility is role-aware: the creator always sees their own matters; PRINCIPAL/PARTNER see **all** matters in their chambers; ASSOCIATE/TRAINEE see the ones they created. Cross-account access returns **404** (never 403), so a matter's existence isn't leaked.
+
+| Method & Route | Request | Response | Notes |
+| --- | --- | --- | --- |
+| `POST /api/v1/matters` | `{ title, client_name?, practice_area?, jurisdiction?, chambers_id? }` | `Matter` (201) | `practice_area` must be a `PracticeArea` (**422** otherwise). If `chambers_id` is set, caller must be a member (**403** otherwise). |
+| `GET /api/v1/matters` | — | `{ matters: Matter[] }` | Role-aware union, newest first. |
+| `GET /api/v1/matters/{id}` | — | `MatterWorkspace` | `{ matter, documents, chats }`. **404** if not visible. `chats` are the caller's own threads only. |
+| `PATCH /api/v1/matters/{id}` | `{ title?, client_name?, practice_area?, jurisdiction?, status? }` | `Matter` | **403** unless owner or PRINCIPAL/PARTNER; **422** invalid `practice_area`/`status`. |
+| `DELETE /api/v1/matters/{id}` | — | `{ status: "ARCHIVED", matter, archived_documents, archived_chats }` | **Archive, not destroy** — reversible via `PATCH { status: "OPEN" }`. Documents/chats keep their link. |
+| `POST /api/v1/matters/{id}/documents` | `{ document_ids: string[] }` | `{ attached: string[], skipped: string[] }` | Only documents **owned by the caller** attach; others are silently `skipped`. |
+| `DELETE /api/v1/matters/{id}/documents/{docId}` | — | `{ detached: true }` | **404** if the doc isn't the caller's. |
+| `POST /api/v1/matters/{id}/chats` | `{ chat_ids: string[] }` | `{ attached, skipped }` | Same ownership rule as documents. |
+| `DELETE /api/v1/matters/{id}/chats/{chatId}` | — | `{ detached: true }` | **404** if the chat isn't the caller's. |
+
+> **How docs/chats get filed under a matter:** either attach existing ones via the endpoints above, or pass `matter_id` when creating a chat (Part I §5.2) / uploading a document. The matter workspace (`GET /api/v1/matters/{id}`) is the join view.
+
+## 13. Chat Export — `POST /api/v1/chats/{chat_id}/export`
+
+Renders a chat transcript (with its citations, and matter/chambers header if filed) to a downloadable file. **This is a tier-gated binary endpoint**, not JSON.
+
+- Body: `{ "format": "PDF" | "DOCX" | "PPTX" }` (defaults to `PDF`).
+- Gate: **FREE → PDF**, **STARTER → +DOCX**, **PRO → +PPTX**. A blocked format returns **402** with the upgrade envelope.
+- **422** unsupported format string; **404** unknown chat or a chat you don't own.
+- Success: `200` with `Content-Type` `application/pdf` / the OOXML mime, and `Content-Disposition: attachment; filename="..."`. Each successful export meters one `EXPORT` usage event.
+
+```javascript
+export async function exportChat(chatId, format, getToken) {
+  const token = await getToken();
+  const res = await fetch(`${API_BASE_URL}/api/v1/chats/${chatId}/export`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ format }),
+  });
+  if (res.status === 402) { const b = await res.json(); /* -> upgrade modal */ throw { tierGate: b.detail }; }
+  if (!res.ok) throw new Error(`Export failed: ${res.status}`);
+
+  const blob = await res.blob();
+  const disposition = res.headers.get("Content-Disposition") || "";
+  const filename = /filename="(.+?)"/.exec(disposition)?.[1] || `chat.${format.toLowerCase()}`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href = url; a.download = filename; a.click();
+  URL.revokeObjectURL(url);
+}
+```
+
+## 14. Billing & Usage — `/api/v1/billing`
+
+| Method & Route | Request | Response | Notes |
+| --- | --- | --- | --- |
+| `GET /api/v1/billing/plan` | — | `PlanResponse` | Current tier, entitlements, this month's usage vs quota, and the public price list (`plans`). Drive the usage meters + pricing page from this one call. |
+| `POST /api/v1/billing/checkout` | `{ tier, chambers_id?, email?, callback_url? }` | `CheckoutResponse` | Start an upgrade. See rules below. |
+| `POST /api/v1/billing/webhook` | Paystack event | `{ status }` | **Webhook, not for the FE.** Paystack calls it directly; verified by HMAC-SHA512 signature. |
+
+**Checkout rules (all enforced server-side):**
+- `tier` must be `STARTER` or `PRO`. `ENTERPRISE`/`FREE` → **400** (Enterprise is sales-led). Unknown tier → **422**.
+- The caller must be the **PRINCIPAL** of the target chambers (**403** otherwise), and a chambers must exist on their profile or be passed as `chambers_id` (**400** if none — "billing is per-chambers").
+- If Paystack is configured, `email` is required (**400** otherwise) and the response has `provider: "paystack"` + an `authorization_url` — **redirect the browser there**.
+- If Paystack is **not** configured (dev), the response has `provider: "mock"` and `authorization_url: null` — show a "mock upgrade" state; the tier does not change until a webhook fires.
+
+```javascript
+export async function startCheckout({ tier, chambers_id, email, callback_url }, getToken) {
+  const body = await fetchWithAuth("/api/v1/billing/checkout", {
+    method: "POST", headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ tier, chambers_id, email, callback_url }),
+  }, getToken);
+  if (body.provider === "paystack" && body.authorization_url) {
+    window.location.href = body.authorization_url; // Paystack hosted page
+  }
+  return body; // provider === "mock" in dev
+}
+```
+
+> **Upgrade lifecycle:** checkout only *starts* payment. The chambers' tier flips to the paid plan **only when Paystack calls the webhook** with `charge.success`. After returning from the Paystack page, re-fetch `GET /api/v1/billing/plan` to reflect the new tier (poll briefly if needed, since the webhook is async).
+
+## 15. Privacy / NDPA — `/api/v1/privacy`
+
+| Method & Route | Auth | Response | Notes |
+| --- | --- | --- | --- |
+| `GET /api/v1/privacy/policy-statement` | **Public** (no token) | Data-handling statement | NDPA 2023 alignment; render on onboarding/settings. |
+| `POST /api/v1/privacy/delete-my-data` | Bearer | `{ status: "completed", deleted: {...} }` | **Irreversible right-to-erasure.** Purges the caller's documents (vectors + files + rows), chats, matters, memberships, usage events, audit logs, and profile. |
+
+> Gate the erasure button behind an explicit "type DELETE to confirm" dialog. After it returns, sign the user out / send them back to onboarding — their profile is gone (a fresh default one is minted on next `GET /me/profile`).
+
+## 16. Audit Log — `GET /api/v1/audit`
+
+Reads a chambers' compliance trail. Triple-gated: **PRO+** plan (**402** otherwise), caller must be **PRINCIPAL/PARTNER** (**403** otherwise), and it's always scoped to that one chambers.
+
+- Query: `?limit=` (1–500, default 100).
+- Response: `{ chambers_id, tier, count, logs: AuditEntry[] }` (newest first).
+- **400** if the caller has no chambers.
+
+```javascript
+export const getAuditLog = (limit = 100, getToken) =>
+  fetchWithAuth(`/api/v1/audit?limit=${limit}`, {}, getToken); // 402 -> upgrade, 403 -> hide the nav item
+```
+
+## 17. BE2 Error Semantics (extends §7)
+
+| HTTP Status | BE2 Trigger | Frontend Action |
+| --- | --- | --- |
+| `402 Payment Required` | Action needs a higher tier (Enhanced mode, DOCX/PPTX export, chambers seat limit, audit log) | Open the upgrade modal using `detail.upgrade_required`. **Never** a red error toast. |
+| `403 Forbidden` | Signed in but lacks the role (e.g. associate editing billing, non-principal changing roles) | Inline "you don't have permission" — do **not** redirect to sign-in. |
+| `404 Not Found` | Accessing another user's / another chambers' resource (matters, chambers, chats) | "Not found" — this is deliberate isolation, not a bug. |
+| `422 Unprocessable` | Invalid enum (`role`, `practice_area`, `status`, export `format`, unknown billing `tier`) | Validate against the enums in §9 before sending. |
+
+---
+
+## 18. What the FE must build to be in sync with BE2
+
+1. **A global 402 interceptor** in the API client that opens an upgrade modal from the envelope in §8 — every gated route depends on it.
+2. **Onboarding**: call `GET /me/profile` post-sign-in; let the user set `role` + `nba_number` via `PUT`.
+3. **Chambers screen**: create/join, member list with role management (PRINCIPAL-only), invite-code sharing (shown only to PRINCIPAL/PARTNER).
+4. **Matter workspace**: list/create matters, the `{matter, documents, chats}` detail view, attach/detach, archive.
+5. **Export menu** on a chat: PDF always; DOCX/PPTX shown but gated (402 → upgrade).
+6. **Billing/usage page**: render meters + pricing from `GET /billing/plan`; wire the upgrade CTA to `POST /billing/checkout` and redirect to Paystack; re-fetch the plan on return.
+7. **Settings → Privacy**: render the public policy statement; a guarded "delete my data" action.
+8. **Audit view** (PRO+, leadership only): table from `GET /audit`; hide the nav entry on 402/403.

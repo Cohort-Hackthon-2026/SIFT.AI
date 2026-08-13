@@ -29,6 +29,14 @@ class DocumentRegistryProtocol(Protocol):
 
     async def delete_document(self, document_id: str) -> bool: ...
 
+    async def set_document_matter(
+        self, document_id: str, user_id: str, matter_id: str | None
+    ) -> dict[str, Any] | None: ...
+
+    async def list_documents_by_matter(
+        self, matter_id: str, user_id: str | None = None
+    ) -> list[dict[str, Any]]: ...
+
 
 @dataclass
 class InMemoryDocumentRegistry:
@@ -53,6 +61,23 @@ class InMemoryDocumentRegistry:
 
     async def delete_document(self, document_id: str) -> bool:
         return self._documents.pop(document_id, None) is not None
+
+    async def set_document_matter(
+        self, document_id: str, user_id: str, matter_id: str | None
+    ) -> dict[str, Any] | None:
+        doc = self._documents.get(document_id)
+        if doc is None or doc.get("user_id") != user_id:
+            return None
+        doc["matter_id"] = matter_id
+        return doc
+
+    async def list_documents_by_matter(
+        self, matter_id: str, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        docs = [d for d in self._documents.values() if d.get("matter_id") == matter_id]
+        if user_id:
+            docs = [d for d in docs if d.get("user_id") == user_id]
+        return sorted(docs, key=lambda d: d["uploaded_at"], reverse=True)
 
 
 class PostgresDocumentRegistry:
@@ -102,8 +127,15 @@ class PostgresDocumentRegistry:
         try:
             from app.db.models import DocumentRecord
 
+            # The upload route includes a derived ``file_url`` in the record for
+            # the API response; it isn't a column. Filter to real columns so
+            # ``DocumentRecord(**record)`` doesn't TypeError on the live DB path
+            # (the in-memory fallback just stores the dict verbatim).
+            valid_columns = {c.name for c in DocumentRecord.__table__.columns}
+            clean = {k: v for k, v in record.items() if k in valid_columns}
+
             async with self._sessionmaker() as session:
-                session.add(DocumentRecord(**record))
+                session.add(DocumentRecord(**clean))
                 await session.commit()
         except Exception as exc:  # pragma: no cover - depends on live DB availability
             self._set_last_error(exc)
@@ -159,6 +191,50 @@ class PostgresDocumentRegistry:
         except Exception as exc:  # pragma: no cover - depends on live DB availability
             self._set_last_error(exc)
             return await self._fallback.delete_document(document_id)
+
+    async def set_document_matter(
+        self, document_id: str, user_id: str, matter_id: str | None
+    ) -> dict[str, Any] | None:
+        if self._sessionmaker is None or self._last_error:
+            return await self._fallback.set_document_matter(document_id, user_id, matter_id)
+        try:
+            from app.db.models import DocumentRecord
+
+            async with self._sessionmaker() as session:
+                record = await session.get(DocumentRecord, document_id)
+                if record is None or record.user_id != user_id:
+                    return None
+                record.matter_id = matter_id
+                await session.commit()
+                await session.refresh(record)
+                return record.to_dict()
+        except Exception as exc:  # pragma: no cover - depends on live DB availability
+            self._set_last_error(exc)
+            return await self._fallback.set_document_matter(document_id, user_id, matter_id)
+
+    async def list_documents_by_matter(
+        self, matter_id: str, user_id: str | None = None
+    ) -> list[dict[str, Any]]:
+        if self._sessionmaker is None or self._last_error:
+            return await self._fallback.list_documents_by_matter(matter_id, user_id)
+        try:
+            from sqlalchemy import select
+
+            from app.db.models import DocumentRecord
+
+            async with self._sessionmaker() as session:
+                statement = (
+                    select(DocumentRecord)
+                    .where(DocumentRecord.matter_id == matter_id)
+                    .order_by(DocumentRecord.uploaded_at.desc())
+                )
+                if user_id:
+                    statement = statement.where(DocumentRecord.user_id == user_id)
+                result = await session.execute(statement)
+                return [row.to_dict() for row in result.scalars().all()]
+        except Exception as exc:  # pragma: no cover - depends on live DB availability
+            self._set_last_error(exc)
+            return await self._fallback.list_documents_by_matter(matter_id, user_id)
 
 
 def utc_now() -> datetime:
