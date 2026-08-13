@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Plus, MessageSquare, PanelLeftClose, Settings } from "lucide-react";
+import { Plus, MessageSquare, PanelLeftClose, Settings, Zap } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth, useClerk, useUser } from "@clerk/react";
 
@@ -9,6 +9,8 @@ import SidebarFooter from "./SidebarFooter";
 
 import { useChat } from "../../../store/chat";
 import { useDocuments } from "../../../store/documents";
+import { useUI } from "../../../store/ui";
+import { useBilling } from "../../../store/billing";
 
 function Sidebar({ isOpen, onClose }) {
   const [isSigningOut, setIsSigningOut] = useState(false);
@@ -27,16 +29,20 @@ function Sidebar({ isOpen, onClose }) {
   const deleteChat = useChat((state) => state.deleteChat);
   const error = useChat((state) => state.error);
   const documents = useDocuments((state) => state.documents);
+  const { openBillingModal } = useUI();
+  const { plan, fetchPlan } = useBilling();
 
   useEffect(() => {
     if (isSignedIn) {
       void loadChats();
+      // Fetch billing plan for the upgrade button
+      fetchPlan().catch(() => {});
     } else {
       useChat.getState().setChats([]);
       useChat.getState().setActiveChatId(null);
       useChat.getState().clearMessages();
     }
-  }, [isSignedIn, loadChats]);
+  }, [isSignedIn, loadChats, fetchPlan]);
 
   const handleNewChat = async () => {
     if (!isSignedIn) {
@@ -147,7 +153,17 @@ function Sidebar({ isOpen, onClose }) {
 
         </div>
 
-        <div className="shrink-0 border-t border-border bg-surface/95 px-4 py-2 backdrop-blur-xl">
+        <div className="shrink-0 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur-xl space-y-2">
+          {/* {isSignedIn && (plan?.tier === "FREE" || !plan?.tier) && (
+            <button
+              type="button"
+              onClick={() => { openBillingModal(); onClose?.(); }}
+              className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-medium bg-primary text-textInverse transition hover:opacity-90"
+            >
+              <Zap size={16} />
+              Upgrade to Premium
+            </button>
+          )} */}
           <button
             type="button"
             onClick={() => { navigate("/settings"); onClose?.(); }}
@@ -156,6 +172,17 @@ function Sidebar({ isOpen, onClose }) {
             <Settings size={18} />
             Settings
           </button>
+
+           {isSignedIn && (plan?.tier === "FREE" || !plan?.tier) && (
+            <button
+              type="button"
+              onClick={() => { openBillingModal(); onClose?.(); }}
+              className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-medium bg-primary text-textInverse transition hover:opacity-90"
+            >
+              <Zap size={16} />
+              Upgrade to Premium
+            </button>
+          )}
         </div>
 
         {isSignedIn && <SidebarFooter email={email} imageUrl={user?.imageUrl} onLogout={handleLogout} isSigningOut={isSigningOut} />}

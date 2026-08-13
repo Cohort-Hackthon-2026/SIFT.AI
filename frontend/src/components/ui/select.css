@@ -1,0 +1,33 @@
+.sift-select {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 12px;
+  color: var(--text);
+  min-width: 180px;
+}
+
+.sift-select select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  border: none;
+  outline: none;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+}
+
+.sift-select .sift-select-arrow {
+  position: absolute;
+  right: 8px;
+  pointer-events: none;
+  color: var(--text-muted);
+}
+
+@media (max-width: 640px) {
+  .sift-select { min-width: 120px; padding: 8px 10px; }
+}

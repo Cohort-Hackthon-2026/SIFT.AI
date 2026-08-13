@@ -54,6 +54,23 @@ async function request(path, options = {}) {
     const detail = formatApiError(payload, response.statusText);
     const err = new Error(detail || "Request failed");
     err.status = response.status;
+    // Attach tier-gate detail when backend returns 402 Payment Required
+    if (response.status === 402) {
+      try {
+        const body = typeof payload === "string" && payload ? JSON.parse(payload) : payload;
+        err.tierGate = body?.detail || null;
+      } catch {
+        err.tierGate = null;
+      }
+    }
+    // If the global opener is registered, call it so UI can show the upgrade modal immediately
+    try {
+      if (err.tierGate && typeof window !== 'undefined' && window.__sift_open_upgrade) {
+        window.__sift_open_upgrade(err.tierGate);
+      }
+    } catch {
+      // ignore
+    }
     throw err;
   }
 
@@ -96,6 +113,22 @@ async function stream(path, options = {}) {
     }
     const err = new Error(detail || "Request failed");
     err.status = response.status;
+    // If this is a 402, expose the upgrade envelope on the error
+    if (response.status === 402) {
+      try {
+        const body = rawText ? JSON.parse(rawText) : null;
+        err.tierGate = body?.detail || null;
+      } catch {
+        err.tierGate = null;
+      }
+    }
+    try {
+      if (err.tierGate && typeof window !== 'undefined' && window.__sift_open_upgrade) {
+        window.__sift_open_upgrade(err.tierGate);
+      }
+    } catch {
+      // ignore
+    }
     err.detail = detail;
     throw err;
   }
@@ -197,4 +230,20 @@ export const api = {
     stream("/api/v1/chat/stream", { method: "POST", body: payload }),
 
   readEventStream,
+  // --- Profile endpoints
+  getMyProfile: () => request(`/api/v1/me/profile`),
+  updateMyProfile: (patch) => request(`/api/v1/me/profile`, { method: "PUT", body: patch }),
+
+  // --- Billing endpoints
+  getBillingPlan: () => request(`/api/v1/billing/plan`),
+  startCheckout: (body) => request(`/api/v1/billing/checkout`, { method: "POST", body }),
+
+  // --- Chambers / Teams
+  createChambers: (name) => request(`/api/v1/chambers`, { method: "POST", body: { name } }),
+  listChambers: () => request(`/api/v1/chambers`),
+  joinChambers: (invite_code) => request(`/api/v1/chambers/join`, { method: "POST", body: { invite_code } }),
+  getChambersDetail: (id) => request(`/api/v1/chambers/${encodeId(id)}`),
+  listChambersMembers: (id) => request(`/api/v1/chambers/${encodeId(id)}/members`),
+  updateChambersMemberRole: (id, userId, role) => request(`/api/v1/chambers/${encodeId(id)}/members/${encodeId(userId)}`, { method: "PATCH", body: { role } }),
+  removeChambersMember: (id, userId) => request(`/api/v1/chambers/${encodeId(id)}/members/${encodeId(userId)}`, { method: "DELETE" }),
 };

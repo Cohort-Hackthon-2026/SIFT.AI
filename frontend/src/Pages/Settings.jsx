@@ -1,8 +1,12 @@
 import { useEffect, useState } from "react";
 import { Circle, CircleCheck, Play, Settings2, Square } from "lucide-react";
+import { useBilling } from "../../store/billing";
+import { useUI } from "../../store/ui";
 
 import MainLayout from "../components/layout/MainLayout";
 import { useSettings } from "../../store/settings";
+import { useProfile } from "../../store/profile";
+import Select from "../components/ui/Select";
 import { SPEECH_PREVIEW, speakText } from "../lib/speech";
 
 function Settings() {
@@ -67,8 +71,111 @@ function Settings() {
             })}
           </div>
         </div>
+
+        <div className="mt-6 rounded-3xl border border-border bg-surface p-4 shadow-sm sm:p-6">
+          <div className="mb-5 flex items-start justify-between">
+            <div>
+              <h3 className="text-lg font-semibold text-text">Billing & Plan</h3>
+              <p className="mt-1 text-sm text-textMuted">View your current subscription and upgrade your chambers.</p>
+            </div>
+          </div>
+
+          <BillingSection />
+        </div>
+      </section>
+
+      <section className="mx-auto w-full max-w-4xl py-2 sm:py-6">
+        <div className="rounded-3xl border border-border bg-surface p-4 shadow-sm sm:p-6">
+          <h3 className="text-lg font-semibold text-text">Profile</h3>
+          <ProfileEditor />
+        </div>
       </section>
     </MainLayout>
+  );
+}
+          <ProfileEditor />
+
+function BillingSection() {
+  const { plan, fetchPlan, startCheckout, loading } = useBilling();
+  const openUpgradeModal = useUI((s) => s.openUpgradeModal);
+
+  useEffect(() => { fetchPlan().catch(() => {}); }, []);
+
+  const handleUpgrade = async () => {
+    try {
+      const res = await startCheckout({ tier: 'STARTER' });
+      if (res.provider === 'paystack' && res.authorization_url) {
+        window.location.href = res.authorization_url;
+      } else {
+        // mock provider
+        openUpgradeModal({ message: 'Dev checkout created (mock). Complete via webhook to finalize upgrade.', upgrade_required: null });
+      }
+    } catch (err) {
+      if (err.tierGate) {
+        openUpgradeModal(err.tierGate);
+      } else {
+        openUpgradeModal({ message: err.message || 'Checkout failed', upgrade_required: null });
+      }
+    }
+  };
+
+  return (
+    <div className="grid gap-4 sm:grid-cols-2">
+      <div className="rounded-lg border border-border bg-background p-4">
+        <div className="text-sm text-textMuted">Current tier</div>
+        <div className="mt-2 flex items-center justify-between">
+          <div>
+            <div className="text-lg font-semibold text-text">{plan?.tier || 'FREE'}</div>
+            <div className="text-sm text-textMuted">Members: {plan?.chambers_id ? 'Chambers' : 'Personal'}</div>
+          </div>
+          <div>
+            <button disabled={loading} onClick={handleUpgrade} className="rounded-md bg-primary px-4 py-2 text-text-inverse">Upgrade</button>
+          </div>
+        </div>
+      </div>
+      <div className="rounded-lg border border-border bg-background p-4">
+        <div className="text-sm text-textMuted">Usage</div>
+        <div className="mt-2 text-sm text-textMuted">{plan ? JSON.stringify(plan.usage || {}) : 'No usage data'}</div>
+      </div>
+    </div>
+  );
+}
+function ProfileEditor() {
+  const { profile, fetchProfile, updateProfile, loading } = useProfile();
+  const [role, setRole] = useState(profile?.role || "ASSOCIATE");
+
+  useEffect(() => { fetchProfile().then(p => setRole(p?.role || 'ASSOCIATE')).catch(() => {}); }, []);
+
+  const roles = [
+    { value: 'PRINCIPAL', label: 'Principal' },
+    { value: 'PARTNER', label: 'Partner' },
+    { value: 'ASSOCIATE', label: 'Associate' },
+    { value: 'TRAINEE', label: 'Trainee' },
+    { value: 'LAW_STUDENT', label: 'Law Student' },
+    { value: 'SAN', label: 'SAN' },
+  ];
+
+  const save = async () => {
+    try {
+      await updateProfile({ role });
+      alert('Profile updated');
+    } catch (err) {
+      alert('Failed to update profile: ' + (err.message || String(err)));
+    }
+  };
+
+  return (
+    <div className="mt-4 grid gap-4 sm:grid-cols-3">
+      <div className="sm:col-span-2">
+        <label className="block text-sm text-textMuted">Role</label>
+        <div className="mt-2">
+          <Select value={role} onChange={setRole} options={roles} placeholder="Select role" />
+        </div>
+      </div>
+      <div className="flex items-end">
+        <button onClick={save} disabled={loading} className="rounded-md bg-primary px-4 py-2 text-text-inverse">Save</button>
+      </div>
+    </div>
   );
 }
 
