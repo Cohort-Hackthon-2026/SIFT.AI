@@ -21,6 +21,87 @@
   font-size: 14px;
 }
 
+/* Custom dropdown styles */
+.sift-select-custom {
+  position: relative;
+  display: inline-block;
+  min-width: 220px;
+}
+
+.sift-select-trigger {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  width: 100%;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 10px 14px;
+  border-radius: 10px;
+  font-size: 14px;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(16,24,40,0.04);
+}
+
+.sift-select-trigger:focus {
+  outline: none;
+  box-shadow: 0 4px 14px color-mix(in srgb, var(--primary) 18%, transparent);
+  border-color: var(--primary);
+}
+
+.sift-select-value.muted { color: var(--text-muted); }
+.sift-select-chevron { color: var(--text-muted); }
+
+.sift-select-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0,0,0,0.8);
+  z-index: 1998;
+}
+
+.sift-select-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  right: 0;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  max-height: 280px;
+  overflow: auto;
+  box-shadow: 0 12px 30px rgba(2,6,23,0.12);
+  transition: transform 120ms ease, opacity 120ms ease;
+  transform-origin: top center;
+  opacity: 0;
+  transform: translateY(-6px) scale(0.99);
+  z-index: 2000;
+  padding: 6px;
+  display: none;
+}
+
+.sift-select-menu.open { display: block; opacity: 1; transform: translateY(0) scale(1); }
+
+.sift-select-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 8px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.sift-select-item:hover { background: color-mix(in srgb, var(--primary) 6%, transparent); }
+.sift-select-item.selected { background: color-mix(in srgb, var(--primary) 12%, transparent); }
+.sift-select-item-label { font-size: 14px; }
+.sift-select-item-check { color: var(--primary); }
+
+@media (max-width: 640px) {
+  .sift-select-custom { min-width: 160px; }
+}
+
 .sift-select .sift-select-arrow {
   position: absolute;
   right: 8px;

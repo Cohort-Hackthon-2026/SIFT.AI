@@ -10,6 +10,10 @@ export const useUI = create((set) => ({
   openRoleSelectionModal: () => set({ roleSelectionModalOpen: true }),
   closeRoleSelectionModal: () => set({ roleSelectionModalOpen: false }),
 
+  chamberSelectionModalOpen: false,
+  openChamberSelectionModal: () => set({ chamberSelectionModalOpen: true }),
+  closeChamberSelectionModal: () => set({ chamberSelectionModalOpen: false }),
+
   billingModalOpen: false,
   openBillingModal: () => set({ billingModalOpen: true }),
   closeBillingModal: () => set({ billingModalOpen: false }),

@@ -1,12 +1,16 @@
 import React, { useEffect, useState } from "react";
-import { X, Check } from "lucide-react";
+import { X, Check, Loader } from "lucide-react";
+import { useUser } from "@clerk/react";
 import { useUI } from "../../../store/ui";
 import { useBilling } from "../../../store/billing";
-import Toast from "./Toast"; // Adjust path as needed
+import { useProfile } from "../../../store/profile";
+import Toast from "./Toast";
 
 export default function BillingModal() {
+  const { user } = useUser();
   const { billingModalOpen, closeBillingModal } = useUI();
-  const { plan, fetchPlan, startCheckout } = useBilling();
+  const { plan, fetchPlan, startCheckout, processingPayment, resetPaymentState } = useBilling();
+  const { profile, fetchProfile } = useProfile();
 
   const [loadingTier, setLoadingTier] = useState(null);
   const [toast, setToast] = useState(null);
@@ -24,39 +28,101 @@ export default function BillingModal() {
     }
   }, [billingModalOpen]);
 
-  // Polling mechanism
+  // Polling mechanism for payment completion
   useEffect(() => {
-    if (!billingModalOpen) return;
+    if (!processingPayment || !billingModalOpen) return;
 
-    const interval = setInterval(() => {
-      useBilling.getState().refreshPlan().catch(() => {});
+    let pollCount = 0;
+    const maxPolls = 40; // ~2 minutes with 3-second intervals
+    
+    const interval = setInterval(async () => {
+      pollCount++;
+      
+      if (pollCount > maxPolls) {
+        // Stop polling after ~2 minutes
+        setToast({
+          message: "Payment processing taking longer than expected. Your upgrade will complete shortly.",
+          type: "info",
+        });
+        resetPaymentState();
+        clearInterval(interval);
+        return;
+      }
+
+      try {
+        const result = await useBilling.getState().refreshPlan();
+        
+        if (result.success) {
+          // Tier changed - payment succeeded!
+          setLoadingTier(null);
+          setToast({
+            message: `Successfully upgraded to ${result.tier}!`,
+            type: "success",
+          });
+          // Refetch profile to update chambers state
+          await fetchProfile();
+          clearInterval(interval);
+          // Close modal after showing success
+          setTimeout(() => {
+            resetPaymentState();
+            closeBillingModal();
+          }, 2000);
+        }
+      } catch (err) {
+        console.error("Error polling for payment completion:", err);
+      }
     }, 3000);
 
     return () => clearInterval(interval);
-  }, [billingModalOpen]);
+  }, [processingPayment, billingModalOpen, fetchProfile, resetPaymentState, closeBillingModal]);
+
 
   if (!billingModalOpen) return null;
 
   const handleUpgrade = async (tier) => {
     setLoadingTier(tier);
     try {
-      const res = await startCheckout({ tier });
+      // Get user email from Clerk
+      const userEmail = user?.primaryEmailAddress?.emailAddress;
+      if (!userEmail) {
+        setLoadingTier(null);
+        setToast({
+          message: "Unable to retrieve email. Please sign out and sign back in.",
+          type: "error",
+        });
+        return;
+      }
+
+      // Pass chambers_id from profile if available, along with email and tier
+      const checkoutParams = {
+        tier,
+        email: userEmail,
+      };
+      
+      // If user has a chambers, pass it explicitly
+      // (though guide says it's optional if on profile, being explicit helps)
+      if (profile?.chambers_id) {
+        checkoutParams.chambers_id = profile.chambers_id;
+      }
+
+      const res = await startCheckout(checkoutParams);
       if (res?.provider === "paystack" && res?.authorization_url) {
+        // Paystack will redirect back after payment
         window.location.href = res.authorization_url;
       } else {
+        // Mock mode - payment will complete via webhook simulation
         setToast({
-          message: "Checkout created (dev mode). Upgrade will be finalized via webhook.",
+          message: "Processing payment... Please wait.",
           type: "info",
         });
       }
     } catch (err) {
+      setLoadingTier(null);
       const errorMessage = err?.tierGate?.message || err?.message || String(err);
       setToast({
         message: errorMessage,
         type: "error",
       });
-    } finally {
-      setLoadingTier(null);
     }
   };
 
