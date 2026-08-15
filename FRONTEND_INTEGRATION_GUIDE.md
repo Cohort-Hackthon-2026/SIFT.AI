@@ -99,11 +99,21 @@ export interface ChatMessage {
   created_at: string;
 }
 
+export interface BoundingBox {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
+}
+
 export interface InternalCitation {
   document_id: string;
   document_name: string;
   page_number: number;
   chunk_id: string;
+  bounding_boxes?: BoundingBox[];  // NEW — for PDF highlight overlay
+  file_url?: string;               // NEW — e.g. "/api/v1/documents/{id}/file"
+  source?: "pdf" | "image" | "chat_text";  // NEW — source type for rendering
 }
 
 export interface ExternalCitation {
@@ -115,6 +125,7 @@ export interface ExternalCitation {
 export interface LegalConflictAlert {
   has_conflict: boolean;
   severity?: "HIGH" | "MEDIUM" | "LOW";
+  confidence_score?: number;        // NEW — 0.0–1.0, only alerts ≥ 0.75 are shown
   contract_clause?: string;
   legal_precedent?: string;
   explanation?: string;
@@ -133,6 +144,7 @@ export interface ChatStreamRequest {
   chat_id?: string;
   mode?: QueryMode;
   document_ids?: string[];
+  images?: string[];                // NEW — base64-encoded inline images (max 3, 5MB each)
   top_k?: number;
   min_score_threshold?: number;
 }
@@ -151,6 +163,18 @@ export interface SSEMetadataEvent {
 
 export interface SSEMessageEvent {
   delta: string;
+}
+
+// NEW SSE events:
+export interface SSEModeChangeEvent {
+  from: QueryMode;
+  to: QueryMode;
+}
+
+export interface SSEErrorEvent {
+  code: "WEB_SEARCH_FAILED" | "LLM_STREAM_FAILED";
+  message: string;
+  remediation: string;
 }
 ```
 
@@ -210,18 +234,19 @@ export async function fetchWithAuth(endpoint, options = {}, getToken) {
 
 | Method & Route | Request Format | Response Format | Purpose |
 | --- | --- | --- | --- |
-| `POST /api/v1/documents/upload` | `FormData`: `file`, `document_name` | `DocumentUploadResponse` | Upload PDF, extract chunks, push to Ahnlich vector DB, save PDF in R2, register in Postgres. |
-| `GET /api/v1/documents` | None | `{ documents: DocumentRecord[] }` | Fetch list of active PDFs uploaded by user. |
+| `POST /api/v1/documents/upload` | `FormData`: `file`, `document_name`, `source_type` (optional, default `"auto"`) | `DocumentUploadResponse` | Upload PDF or image (PNG, JPEG, WebP, TIFF). PDFs: extract text + bounding boxes. Images: extract text via Gemini Vision. Both: chunk, vectorise, save to R2, register in Postgres. |
+| `GET /api/v1/documents` | None | `{ documents: DocumentRecord[] }` | Fetch list of active documents uploaded by user. |
 | `DELETE /api/v1/documents/{doc_id}` | Path param `doc_id` | `{ document_id: string, deleted: boolean }` | Purge document from Ahnlich, R2, and Postgres. |
-| `GET /api/v1/documents/{doc_id}/file` | Path param `doc_id` | Binary stream (`application/pdf`) | Returns raw PDF bytes for split-screen PDF viewer. |
+| `GET /api/v1/documents/{doc_id}/file` | Path param `doc_id` | Binary stream (`application/pdf` or image MIME) | Returns raw file bytes for viewer. |
 
-#### React Example: Uploading a Document
+#### React Example: Uploading a Document (PDF or Image)
 
 ```javascript
-export async function uploadPdf(file, getToken) {
+export async function uploadDocument(file, getToken) {
   const formData = new FormData();
   formData.append("file", file);
   formData.append("document_name", file.name);
+  // source_type defaults to "auto" — backend detects PDF vs image from MIME type.
 
   return await fetchWithAuth("/api/v1/documents/upload", {
     method: "POST",
