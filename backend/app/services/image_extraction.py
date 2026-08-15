@@ -33,7 +33,7 @@ class ImageExtractionService:
 
     def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash")
+        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-3.7-flash")
 
     async def extract_text(self, image_bytes: bytes, content_type: str = "image/jpeg") -> str:
         """Extract text from image bytes using Gemini Vision.
