@@ -1,5 +1,11 @@
 import { useEffect, useState } from "react";
-import { Plus, MessageSquare, PanelLeftClose, Settings, Zap } from "lucide-react";
+import {
+  Plus,
+  MessageSquare,
+  PanelLeftClose,
+  Settings,
+  Zap,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth, useClerk, useUser } from "@clerk/react";
 
@@ -35,14 +41,15 @@ function Sidebar({ isOpen, onClose }) {
   useEffect(() => {
     if (isSignedIn) {
       void loadChats();
-      // Fetch billing plan for the upgrade button
-      fetchPlan().catch(() => {});
+      if (!plan) {
+        fetchPlan().catch(() => {});
+      }
     } else {
       useChat.getState().setChats([]);
       useChat.getState().setActiveChatId(null);
       useChat.getState().clearMessages();
     }
-  }, [isSignedIn, loadChats, fetchPlan]);
+  }, [isSignedIn, loadChats, fetchPlan, plan]);
 
   const handleNewChat = async () => {
     if (!isSignedIn) {
@@ -84,7 +91,8 @@ function Sidebar({ isOpen, onClose }) {
           <div>
             <p className="text-sm font-semibold text-text">Workspace</p>
             <p className="mt-1 text-xs text-textMuted">
-              {documents.length} document{documents.length !== 1 ? "s" : ""} loaded
+              {documents.length} document{documents.length !== 1 ? "s" : ""}{" "}
+              loaded
             </p>
           </div>
 
@@ -150,7 +158,6 @@ function Sidebar({ isOpen, onClose }) {
               {error}
             </p>
           )}
-
         </div>
 
         <div className="shrink-0 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur-xl space-y-2">
@@ -166,17 +173,23 @@ function Sidebar({ isOpen, onClose }) {
           )} */}
           <button
             type="button"
-            onClick={() => { navigate("/settings"); onClose?.(); }}
+            onClick={() => {
+              navigate("/settings");
+              onClose?.();
+            }}
             className="flex w-full items-center gap-3 rounded-xl px-3 py-3 text-sm font-medium text-textMuted transition hover:bg-background hover:text-text"
           >
             <Settings size={18} />
             Settings
           </button>
 
-           {isSignedIn && (plan?.tier === "FREE" || !plan?.tier) && (
+          {isSignedIn && (plan?.tier === "FREE" || !plan?.tier) && (
             <button
               type="button"
-              onClick={() => { openBillingModal(); onClose?.(); }}
+              onClick={() => {
+                openBillingModal();
+                onClose?.();
+              }}
               className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-3 text-sm font-medium bg-primary text-textInverse transition hover:opacity-90"
             >
               <Zap size={16} />
@@ -185,7 +198,14 @@ function Sidebar({ isOpen, onClose }) {
           )}
         </div>
 
-        {isSignedIn && <SidebarFooter email={email} imageUrl={user?.imageUrl} onLogout={handleLogout} isSigningOut={isSigningOut} />}
+        {isSignedIn && (
+          <SidebarFooter
+            email={email}
+            imageUrl={user?.imageUrl}
+            onLogout={handleLogout}
+            isSigningOut={isSigningOut}
+          />
+        )}
       </aside>
 
       {isOpen && (
