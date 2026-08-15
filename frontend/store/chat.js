@@ -2,6 +2,7 @@ import { create } from "zustand";
 
 import { api } from "../src/lib/api";
 import { streamChatQuery } from "../src/lib/sseClient";
+import { generateChatTitle } from "../src/lib/titleGenerator";
 import { useDocuments } from "./documents";
 import { useSettings } from "./settings";
 
@@ -144,7 +145,7 @@ const chatStore = (set, get) => ({
 
   setMessages: (messages) => set({ messages }),
 
-  createNewChat: async (title = "New Research Chat") => {
+  createNewChat: async (title = "New Research Thread") => {
     try {
       const mode = useSettings.getState().mode || "strict";
       const chat = await api.createChat({
@@ -164,6 +165,22 @@ const chatStore = (set, get) => ({
     } catch (err) {
       set({ error: err.message });
       throw err;
+    }
+  },
+
+  renameChat: async (chatId, title) => {
+    const trimmed = (title || "").trim();
+    if (!trimmed || !chatId) return;
+
+    // Optimistic local update
+    set((state) => ({
+      chats: state.chats.map((c) => (c.chat_id === chatId ? { ...c, title: trimmed } : c)),
+    }));
+
+    try {
+      await api.updateChat(chatId, { title: trimmed });
+    } catch (err) {
+      console.warn("Failed to persist renamed chat title:", err);
     }
   },
 
@@ -225,9 +242,24 @@ const chatStore = (set, get) => ({
     let chatId = get().activeChatId;
 
     if (!chatId) {
-      const previewTitle = (trimmed || "Document Analysis").slice(0, 48);
-      const createdChat = await get().createNewChat(previewTitle);
+      const generatedTitle = generateChatTitle(trimmed, imagesToAttach.length > 0 ? "Document & Image Analysis" : "Legal Research");
+      const createdChat = await get().createNewChat(generatedTitle);
       chatId = createdChat.chat_id;
+    } else {
+      // If the current chat has a generic/placeholder title, update it dynamically from the query
+      const currentChat = get().chats.find((c) => c.chat_id === chatId);
+      const isGenericTitle =
+        !currentChat?.title ||
+        currentChat.title === "New Research Chat" ||
+        currentChat.title === "New Research Thread" ||
+        currentChat.title === "New research chat" ||
+        currentChat.title === "Untitled" ||
+        currentChat.title === "New Chat";
+
+      if (isGenericTitle && trimmed) {
+        const smartTitle = generateChatTitle(trimmed, "Legal Research");
+        void get().renameChat(chatId, smartTitle);
+      }
     }
 
     const userMessage = {

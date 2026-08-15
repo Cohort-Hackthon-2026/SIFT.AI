@@ -44,6 +44,7 @@ function Sidebar({ isOpen, onClose }) {
   const createNewChat = useChat((state) => state.createNewChat);
   const selectChat = useChat((state) => state.selectChat);
   const deleteChat = useChat((state) => state.deleteChat);
+  const renameChat = useChat((state) => state.renameChat);
   const error = useChat((state) => state.error);
   const documents = useDocuments((state) => state.documents);
   const { openBillingModal } = useUI();
@@ -79,7 +80,7 @@ function Sidebar({ isOpen, onClose }) {
       return;
     }
     try {
-      await createNewChat("New Research Chat");
+      await createNewChat("New Research Thread");
       navigate("/");
       onClose?.();
     } catch {
@@ -241,6 +242,9 @@ function Sidebar({ isOpen, onClose }) {
                         }}
                         onDelete={() => {
                           void deleteChat(chat.chat_id);
+                        }}
+                        onRename={(chatId, title) => {
+                          void renameChat(chatId, title);
                         }}
                       />
                     ))}

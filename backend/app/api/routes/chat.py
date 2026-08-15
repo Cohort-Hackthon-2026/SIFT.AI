@@ -2,6 +2,7 @@
 import asyncio
 import json
 import logging
+import re
 from typing import Any, List, Optional
 from urllib.parse import urlparse
 from uuid import uuid4
@@ -19,6 +20,43 @@ from app.services.web_search import WebSearchService
 logger = logging.getLogger(__name__)
 
 router = APIRouter(prefix="/api/v1/chat", tags=["chat"])
+
+
+def _generate_chat_title(query: str, images: Optional[List[str]] = None) -> str:
+    """Generate a clean, professional legal topic title from the user query."""
+    cleaned = re.sub(r"[\r\n\t]+", " ", query).strip()
+    if not cleaned:
+        return "Document & Image Analysis" if images else "Legal Research"
+
+    cleaned_lower = cleaned.lower()
+    prefixes = [
+        "can you please explain ", "can you explain ", "could you please explain ", "could you explain ",
+        "please explain ", "please analyze ", "please analyse ", "please summarise ", "please summarize ",
+        "what is the ", "what are the ", "what is ", "what are ", "what does ",
+        "how does ", "how do ", "how can ", "how is ",
+        "is it legal to ", "tell me about the ", "tell me about ", "give me a summary of ",
+        "summarize the ", "summarise the ", "summarize ", "summarise ",
+        "explain the ", "explain ", "find the legal precedents for ", "find precedents for ",
+    ]
+    for prefix in prefixes:
+        if cleaned_lower.startswith(prefix):
+            cleaned = cleaned[len(prefix):].strip()
+            break
+
+    if cleaned:
+        cleaned = cleaned[0].upper() + cleaned[1:]
+
+    cleaned = cleaned.rstrip("?.:;!")
+
+    if len(cleaned) > 50:
+        truncated = cleaned[:50]
+        last_space = truncated.rfind(" ")
+        if last_space > 20:
+            cleaned = truncated[:last_space] + "..."
+        else:
+            cleaned = truncated + "..."
+
+    return cleaned or "Legal Research"
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -196,6 +234,25 @@ async def chat_stream(
                 total_chars += len(msg_content)
         except Exception as exc:
             logger.warning(f"Failed to fetch conversation history: {exc}")
+
+        # Auto-update chat title on first message if currently using a generic default
+        current_title = (chat_record.get("title") or "").strip()
+        if not all_messages or current_title in (
+            "New Research Chat",
+            "New Research Thread",
+            "New Chat",
+            "Untitled Chat",
+            "Untitled",
+            "",
+        ):
+            smart_title = _generate_chat_title(payload.query.strip(), payload.images)
+            if smart_title and smart_title != current_title:
+                try:
+                    await chat_registry.update_chat(
+                        payload.chat_id, user_id=current_user_id, title=smart_title
+                    )
+                except Exception as exc:
+                    logger.warning(f"Failed to auto-update chat title for {payload.chat_id}: {exc}")
 
         # Persist User Message
         await chat_registry.add_message(
