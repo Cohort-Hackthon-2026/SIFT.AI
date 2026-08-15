@@ -64,7 +64,27 @@ export const useBilling = create((set, get) => ({
     }
   },
 
+  verifyPayment: async (reference, targetTier = null) => {
+    set({ loading: true, error: null });
+    try {
+      const tier = targetTier || get().lastCheckoutTier;
+      const res = await api.verifyPayment(reference, tier);
+      const p = await api.getBillingPlan();
+      set({
+        plan: p,
+        processingPayment: false,
+        lastCheckoutTier: null,
+        loading: false,
+      });
+      return { success: true, tier: res?.tier || p?.tier, data: res };
+    } catch (err) {
+      set({ error: err, loading: false, processingPayment: false });
+      throw err;
+    }
+  },
+
   resetPaymentState: () => {
     set({ processingPayment: false, lastCheckoutTier: null, error: null });
   },
 }));
+
