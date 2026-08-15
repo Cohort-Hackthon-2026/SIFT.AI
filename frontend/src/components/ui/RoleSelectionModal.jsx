@@ -1,57 +1,67 @@
-import React, { useState, useEffect } from "react";
+import { useState } from "react";
 import { useUI } from "../../../store/ui";
 import { useProfile } from "../../../store/profile";
 import Select from "./Select";
+import { Scale, ShieldCheck, Globe, X } from "lucide-react";
 
 export default function RoleSelectionModal() {
   const { roleSelectionModalOpen, closeRoleSelectionModal } = useUI();
   const { profile, updateProfile, loading } = useProfile();
-  const [role, setRole] = useState("");
-
-  useEffect(() => {
-    if (profile?.role) {
-      setRole(profile.role);
-    }
-  }, [profile?.role]);
+  const [role, setRole] = useState(profile?.role || "");
+  const [nbaNumber, setNbaNumber] = useState(profile?.nba_number || "");
+  const [defaultJurisdiction, setDefaultJurisdiction] = useState(profile?.default_jurisdiction || "NG");
 
   if (!roleSelectionModalOpen) return null;
 
   const roles = [
-    { value: "PRINCIPAL", label: "Principal" },
+    { value: "PRINCIPAL", label: "Principal Partner" },
     { value: "PARTNER", label: "Partner" },
-    { value: "ASSOCIATE", label: "Associate" },
-    { value: "TRAINEE", label: "Trainee" },
-    { value: "LAW_STUDENT", label: "Law Student" },
-    { value: "SAN", label: "SAN" },
+    { value: "ASSOCIATE", label: "Associate Counsel" },
+    { value: "TRAINEE", label: "NYSC Legal Trainee / Pupil" },
+    { value: "LAW_STUDENT", label: "Law Student / Researcher" },
+    { value: "SAN", label: "Senior Advocate of Nigeria (SAN)" },
+  ];
+
+  const jurisdictions = [
+    { value: "NG", label: "🇳🇬 Nigeria (Federal & State Courts)" },
+    { value: "UK", label: "🇬🇧 United Kingdom (Common Law)" },
+    { value: "US", label: "🇺🇸 United States" },
+    { value: "GH", label: "🇬🇭 Ghana" },
   ];
 
   const handleSave = async () => {
     if (!role) {
-      alert("Please select a role");
+      alert("Please select your professional role to continue.");
       return;
     }
     try {
-      await updateProfile({ role });
-      // Re-fetch profile to ensure chambers_id is in sync
-      await new Promise(r => setTimeout(r, 100));
+      await updateProfile({
+        role,
+        nba_number: nbaNumber.trim() || null,
+        default_jurisdiction: defaultJurisdiction || "NG",
+      });
+      // Small pause to ensure profile store state settles
+      await new Promise((r) => setTimeout(r, 100));
       closeRoleSelectionModal();
     } catch (err) {
-      alert("Failed to update role: " + (err.message || String(err)));
+      alert("Failed to update profile: " + (err.message || String(err)));
     }
   };
 
   return (
     <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !loading) closeRoleSelectionModal();
+      }}
       style={{
         position: "fixed",
         inset: 0,
         display: "flex",
         alignItems: "center",
         justifyContent: "center",
-        /* Overlay uses CSS color-mix to create a semi-transparent version of var(--background) */
-        background: "color-mix(in srgb, var(--background, #000) 70%, transparent)",
-        backdropFilter: "blur(12px)",
-        WebkitBackdropFilter: "blur(12px)",
+        background: "color-mix(in srgb, var(--background, #000) 75%, transparent)",
+        backdropFilter: "blur(16px)",
+        WebkitBackdropFilter: "blur(16px)",
         zIndex: 9999,
         pointerEvents: "auto",
         padding: "16px",
@@ -59,100 +69,183 @@ export default function RoleSelectionModal() {
     >
       <div
         style={{
-          width: 440,
+          width: 480,
           maxWidth: "100%",
           background: "var(--surface, #ffffff)",
-          borderRadius: 20,
+          borderRadius: 24,
           padding: "32px 28px",
           boxShadow:
-            "0 20px 40px -15px rgba(0, 0, 0, 0.15), 0 0 0 1px color-mix(in srgb, var(--text, #000) 8%, transparent)",
+            "0 24px 48px -12px rgba(0, 0, 0, 0.25), 0 0 0 1px color-mix(in srgb, var(--border, #e2e8f0) 80%, transparent)",
           color: "var(--text)",
           zIndex: 10000,
           fontFamily:
             'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
         }}
       >
-        {/* Header Icon / Badge Visual (Optional structural polish) */}
-        <div
-          style={{
-            width: 44,
-            height: 44,
-            borderRadius: 12,
-            background:
-              "color-mix(in srgb, var(--primary, #0066ff) 12%, transparent)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            marginBottom: 20,
-            color: "var(--primary, #0066ff)",
-          }}
-        >
-          <svg
-            width="22"
-            height="22"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
+        {/* Close Button */}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 4 }}>
+          <button
+            type="button"
+            onClick={closeRoleSelectionModal}
+            disabled={loading}
+            aria-label="Close"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 32,
+              height: 32,
+              borderRadius: 10,
+              border: "1px solid var(--border, #e2e8f0)",
+              background: "transparent",
+              color: "var(--text-muted, #999)",
+              cursor: loading ? "not-allowed" : "pointer",
+              opacity: loading ? 0.5 : 1,
+              transition: "all 0.15s ease",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--background, #f1f5f9)"; e.currentTarget.style.color = "var(--text)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}
           >
-            <path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2" />
-            <circle cx="12" cy="7" r="4" />
-          </svg>
+            <X size={16} />
+          </button>
         </div>
 
-        <h2
-          style={{
-            margin: 0,
-            fontSize: 22,
-            fontWeight: 700,
-            letterSpacing: "-0.02em",
-            lineHeight: 1.2,
-          }}
-        >
-          Select your role
-        </h2>
-        <p
-          style={{
-            marginTop: 8,
-            marginBottom: 0,
-            color: "var(--text-muted, #666)",
-            fontSize: 14,
-            lineHeight: 1.5,
-          }}
-        >
-          Choose your professional role to complete your profile setup. You can
-          change this later in settings.
-        </p>
-
-        <div style={{ marginTop: 24 }}>
-          <label
+        {/* Header Icon & Title */}
+        <div style={{ display: "flex", alignItems: "center", gap: 14, marginBottom: 16 }}>
+          <div
             style={{
-              display: "block",
-              fontSize: 13,
-              fontWeight: 600,
-              letterSpacing: "0.01em",
-              color: "var(--text)",
-              marginBottom: 8,
+              width: 48,
+              height: 48,
+              borderRadius: 14,
+              background: "color-mix(in srgb, var(--primary, #0066ff) 14%, transparent)",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: "var(--primary, #0066ff)",
+              flexShrink: 0,
             }}
           >
-            Role
+            <Scale size={24} />
+          </div>
+          <div>
+            <h2
+              style={{
+                margin: 0,
+                fontSize: 22,
+                fontWeight: 700,
+                letterSpacing: "-0.02em",
+                lineHeight: 1.2,
+              }}
+            >
+              Legal Practitioner Profile
+            </h2>
+            <p
+              style={{
+                margin: "4px 0 0 0",
+                color: "var(--text-muted, #666)",
+                fontSize: 13,
+                lineHeight: 1.4,
+              }}
+            >
+              Tailor research precision, court citation standards, and chambers permissions.
+            </p>
+          </div>
+        </div>
+
+        {/* Role Selection */}
+        <div style={{ marginTop: 20 }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 13,
+              fontWeight: 600,
+              color: "var(--text)",
+              marginBottom: 6,
+            }}
+          >
+            Professional Role <span style={{ color: "var(--primary)" }}>*</span>
           </label>
           <Select
             value={role}
             onChange={setRole}
             options={roles}
-            placeholder="Select your role"
+            placeholder="Select your role (e.g. Associate, SAN, Partner)"
           />
         </div>
 
+        {/* NBA Enrolment Number */}
+        <div style={{ marginTop: 18 }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 13,
+              fontWeight: 600,
+              color: "var(--text)",
+              marginBottom: 6,
+            }}
+          >
+            <ShieldCheck size={14} style={{ color: "var(--text-muted)" }} />
+            NBA Enrolment / Bar Number
+            <span style={{ fontSize: 11, fontWeight: 400, color: "var(--text-muted)" }}>(Optional)</span>
+          </label>
+          <input
+            type="text"
+            value={nbaNumber}
+            onChange={(e) => setNbaNumber(e.target.value)}
+            placeholder="e.g. SCN/012345 or NBA-LAG-2024"
+            style={{
+              width: "100%",
+              boxSizing: "border-box",
+              padding: "10px 14px",
+              borderRadius: 12,
+              border: "1px solid color-mix(in srgb, var(--border, #e2e8f0) 90%, transparent)",
+              background: "var(--background, #f8fafc)",
+              color: "var(--text)",
+              fontSize: 14,
+              outline: "none",
+              transition: "border-color 0.15s ease",
+            }}
+          />
+          <span style={{ display: "block", marginTop: 4, fontSize: 11, color: "var(--text-muted)" }}>
+            Used for chambers verification and formal memo letterhead exports.
+          </span>
+        </div>
+
+        {/* Default Jurisdiction */}
+        <div style={{ marginTop: 18 }}>
+          <label
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              fontSize: 13,
+              fontWeight: 600,
+              color: "var(--text)",
+              marginBottom: 6,
+            }}
+          >
+            <Globe size={14} style={{ color: "var(--text-muted)" }} />
+            Primary Legal Jurisdiction
+          </label>
+          <Select
+            value={defaultJurisdiction}
+            onChange={setDefaultJurisdiction}
+            options={jurisdictions}
+            placeholder="Select Jurisdiction"
+          />
+        </div>
+
+        {/* Action Buttons */}
         <div
           style={{
             display: "flex",
             gap: 12,
             justifyContent: "flex-end",
-            marginTop: 32,
+            marginTop: 28,
           }}
         >
           <button
@@ -163,18 +256,18 @@ export default function RoleSelectionModal() {
               background: "var(--primary, #0066ff)",
               color: "var(--text-inverse, #ffffff)",
               border: "none",
-              padding: "12px 20px",
-              borderRadius: 12,
+              padding: "13px 20px",
+              borderRadius: 14,
               fontSize: 14,
               fontWeight: 600,
               cursor: loading ? "not-allowed" : "pointer",
               opacity: loading ? 0.7 : 1,
               transition: "all 0.15s ease",
               boxShadow:
-                "0 4px 12px color-mix(in srgb, var(--primary, #0066ff) 30%, transparent)",
+                "0 4px 16px color-mix(in srgb, var(--primary, #0066ff) 35%, transparent)",
             }}
           >
-            {loading ? "Saving..." : "Continue"}
+            {loading ? "Saving Profile..." : "Complete Setup"}
           </button>
         </div>
       </div>
