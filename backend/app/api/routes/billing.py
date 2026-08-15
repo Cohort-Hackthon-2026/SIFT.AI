@@ -70,6 +70,11 @@ def _paystack_secret() -> str | None:
     return os.getenv("PAYSTACK_SECRET_KEY") or None
 
 
+def _paystack_callback_url() -> str | None:
+    # Read at call time from backend config, not from frontend request (security).
+    return os.getenv("PAYSTACK_CALLBACK_URL") or None
+
+
 def _month_start() -> datetime:
     now = datetime.now(timezone.utc)
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -208,8 +213,9 @@ async def checkout(
         "reference": reference,
         "metadata": metadata,
     }
-    if payload.callback_url:
-        body["callback_url"] = payload.callback_url
+    callback_url = _paystack_callback_url()
+    if callback_url:
+        body["callback_url"] = callback_url
 
     try:
         async with httpx.AsyncClient(timeout=20.0) as http:
