@@ -10,33 +10,82 @@ const normalizeCitation = (citation) => {
     return null;
   }
 
-  if (citation.document_id) {
+  const rawDocId = String(citation.document_id || "");
+  const rawDocName = citation.document_name || citation.document || "";
+  const isChatText =
+    citation.source === "chat_text" ||
+    citation.source === "text" ||
+    citation.source === "user_text" ||
+    rawDocId.startsWith("chat-text-") ||
+    rawDocName === "Chat Context" ||
+    rawDocName === "User Statement Context";
+
+  const rawTextContent =
+    citation.text ||
+    citation.content ||
+    citation.excerpt ||
+    citation.statement ||
+    (typeof citation.chunk_id === "string" && !citation.chunk_id.includes("-") ? citation.chunk_id : "") ||
+    "";
+
+  if (isChatText) {
     return {
-      label: `${citation.document_name || "Document"} · p${citation.page_number || 1}`,
-      document: citation.document_name || "Document",
+      label: "User Text Statement",
+      document: rawDocName === "Chat Context" ? "User Statement & Incident Context" : (rawDocName || "User Statement"),
+      page: null,
+      content: rawTextContent,
+      text: rawTextContent,
+      statement: citation.statement || citation.exact_statement || "",
+      bounding_boxes: [],
+      file_url: null,
+      source: "chat_text",
+      ...citation,
+      source: "chat_text",
+    };
+  }
+
+  if (citation.document_id) {
+    const isImage = citation.source === "image";
+    return {
+      label: `${rawDocName || "Document"} · p${citation.page_number || 1}`,
+      document: rawDocName || "Document",
       page: citation.page_number || 1,
-      content: citation.chunk_id || "",
+      content: rawTextContent,
+      text: rawTextContent,
+      bounding_boxes: citation.bounding_boxes || [],
+      file_url: citation.file_url || null,
+      source: citation.source || (isImage ? "image" : "pdf"),
       ...citation,
     };
   }
 
-  if (citation.title) {
+  if (citation.title || citation.url) {
     return {
-      label: citation.title,
+      label: citation.title || "Web Authority",
       document: citation.domain || "Web source",
       page: null,
-      content: citation.url || "",
+      content: rawTextContent || citation.url || "",
+      text: rawTextContent,
+      source: "web",
       ...citation,
     };
   }
 
-  return citation;
+  return {
+    label: citation.label || "Citation",
+    document: citation.document || "Legal Reference",
+    content: rawTextContent,
+    text: rawTextContent,
+    source: citation.source || "chat_text",
+    ...citation,
+  };
 };
 
 const normalizeMessage = (message) => ({
   id: message.message_id || message.id || crypto.randomUUID(),
   role: message.role,
   content: message.content || "",
+  images: message.metadata?.images || [],
   citations: [
     ...(message.metadata?.internal_citations || []),
     ...(message.metadata?.external_citations || []),
@@ -48,6 +97,7 @@ const normalizeMessage = (message) => ({
 
 const chatStore = (set, get) => ({
   input: "",
+  attachedImages: [], // Array of { id, dataUrl, base64, name }
   messages: [],
   chats: [],
   activeChatId: null,
@@ -58,9 +108,26 @@ const chatStore = (set, get) => ({
   streamStatus: "",
   streamProgress: 0,
   streamSteps: [],
+  streamWarning: null,
   error: null,
 
   setInput: (input) => set((state) => ({ input: typeof input === "function" ? input(state.input) : input })),
+
+  attachImage: (imageObj) =>
+    set((state) => {
+      if (state.attachedImages.length >= 3) {
+        window.addToast?.("Maximum 3 images allowed per message", "info");
+        return state;
+      }
+      return { attachedImages: [...state.attachedImages, imageObj] };
+    }),
+
+  removeAttachedImage: (id) =>
+    set((state) => ({
+      attachedImages: state.attachedImages.filter((img) => img.id !== id),
+    })),
+
+  clearAttachedImages: () => set({ attachedImages: [] }),
 
   addMessage: (message) =>
     set((state) => ({
@@ -146,9 +213,11 @@ const chatStore = (set, get) => ({
     }
   },
 
-  sendMessage: async (content) => {
+  sendMessage: async (content, customImages = null) => {
     const trimmed = content?.trim();
-    if (!trimmed) {
+    const imagesToAttach = customImages !== null ? customImages : get().attachedImages;
+
+    if (!trimmed && imagesToAttach.length === 0) {
       return null;
     }
 
@@ -156,14 +225,16 @@ const chatStore = (set, get) => ({
     let chatId = get().activeChatId;
 
     if (!chatId) {
-      const createdChat = await get().createNewChat(trimmed.slice(0, 48));
+      const previewTitle = (trimmed || "Document Analysis").slice(0, 48);
+      const createdChat = await get().createNewChat(previewTitle);
       chatId = createdChat.chat_id;
     }
 
     const userMessage = {
       id: crypto.randomUUID(),
       role: "user",
-      content: trimmed,
+      content: trimmed || "Please analyse the attached image(s).",
+      images: imagesToAttach.map((img) => img.dataUrl || img.base64),
     };
     const assistantMessage = { id: crypto.randomUUID(), role: "assistant", content: "", citations: [] };
     let assistantMetadata = {};
@@ -171,23 +242,33 @@ const chatStore = (set, get) => ({
     set((state) => ({
       messages: [...state.messages, userMessage],
       input: "",
+      attachedImages: [],
       isSending: true,
       error: null,
       streamStatus: "",
       streamProgress: 0,
       streamSteps: [],
+      streamWarning: null,
     }));
 
     try {
       const mode = useSettings.getState().mode;
       let assistantContent = "";
       let citations = [];
+
+      // Extract raw base64 string without data:image/...;base64, prefix if present
+      const base64Images = imagesToAttach.map((img) => {
+        const raw = img.base64 || img.dataUrl || "";
+        return raw.includes(",") ? raw.split(",")[1] : raw;
+      }).filter(Boolean);
+
       await streamChatQuery({
         payload: {
-          query: trimmed,
+          query: trimmed || "Please analyse the attached image(s).",
           chat_id: chatId,
           mode: (mode || "STRICT").toUpperCase(),
           document_ids: documentIds,
+          images: base64Images.length > 0 ? base64Images : undefined,
           top_k: 5,
           min_score_threshold: 0.5,
         },
@@ -199,7 +280,10 @@ const chatStore = (set, get) => ({
             ...(payload.internal_citations || []),
             ...(payload.external_citations || []),
           ].map(normalizeCitation).filter(Boolean);
-          assistantMetadata = { conflictAlert: payload.conflict_alert || null, mode: payload.mode };
+          assistantMetadata = {
+            conflictAlert: payload.conflict_alert || null,
+            mode: payload.mode,
+          };
         },
         onStatus: (payload) => {
           if (!payload?.step) return;
@@ -211,9 +295,32 @@ const chatStore = (set, get) => ({
               : [...state.streamSteps, { step: payload.step, progress: payload.progress }],
           }));
         },
+        onModeChange: (data) => {
+          if (data?.to) {
+            useSettings.getState().setMode(data.to.toLowerCase());
+            window.addToast?.(`Session mode updated to ${data.to}`, "info");
+          }
+        },
+        onError: (errPayload) => {
+          if (errPayload?.message) {
+            set({
+              streamWarning: {
+                code: errPayload.code,
+                message: errPayload.message,
+                remediation: errPayload.remediation,
+              },
+            });
+            window.addToast?.(errPayload.message, "warning", 5000);
+          }
+        },
       });
 
-      const completedAssistantMessage = { ...assistantMessage, content: assistantContent, citations, ...assistantMetadata };
+      const completedAssistantMessage = {
+        ...assistantMessage,
+        content: assistantContent,
+        citations,
+        ...assistantMetadata,
+      };
       set((state) => ({ messages: [...state.messages, completedAssistantMessage] }));
 
       if (!get().chats.some((chat) => chat.chat_id === chatId)) {
@@ -222,24 +329,25 @@ const chatStore = (set, get) => ({
 
       return completedAssistantMessage;
     } catch (err) {
-      // Format error message for display
       let errorMessage = err.message || "An error occurred";
-      
-      // Try to extract more detailed error information from API response
       if (err.detail) {
         if (typeof err.detail === "string") {
           errorMessage = err.detail;
         } else if (Array.isArray(err.detail)) {
-          // Handle validation errors from Pydantic
-          errorMessage = err.detail
-            .map((e) => e.msg || e.message || JSON.stringify(e))
-            .join("; ");
+          errorMessage = err.detail.map((e) => e.msg || e.message || JSON.stringify(e)).join("; ");
         }
       }
 
-      // Update assistant message with error content
       set((state) => ({
-        messages: [...state.messages, { id: crypto.randomUUID(), role: "assistant", content: `**Error:** "${errorMessage}".\n\nPlease try again or adjust your request.`, error: true }],
+        messages: [
+          ...state.messages,
+          {
+            id: crypto.randomUUID(),
+            role: "assistant",
+            content: `**Error:** "${errorMessage}".\n\nPlease try again or adjust your request.`,
+            error: true,
+          },
+        ],
         error: errorMessage,
       }));
 

@@ -6,12 +6,20 @@ const authStore = (set) => ({
   welcomeVisible: false,
   welcomeDismissed: false,
 
-  continueAsGuest: () =>
+  continueAsGuest: () => {
+    try {
+      let guestId = localStorage.getItem("sift_guest_session_id");
+      if (!guestId) {
+        guestId = `guest_${crypto.randomUUID()}`;
+        localStorage.setItem("sift_guest_session_id", guestId);
+      }
+    } catch {}
     set({
       guest: true,
       welcomeVisible: false,
       welcomeDismissed: true,
-    }),
+    });
+  },
 
   resetGuest: () =>
     set({
