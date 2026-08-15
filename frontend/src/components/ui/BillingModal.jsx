@@ -163,7 +163,10 @@ export default function BillingModal() {
 
   return (
     <>
-      <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm">
+      <div
+        className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4 backdrop-blur-sm"
+        onClick={(e) => { if (e.target === e.currentTarget) closeBillingModal(); }}
+      >
         {/* Modal Outer Container */}
         <div className="relative flex max-h-[90vh] w-full max-w-5xl flex-col rounded-2xl border border-border bg-surface shadow-2xl text-text">
           
