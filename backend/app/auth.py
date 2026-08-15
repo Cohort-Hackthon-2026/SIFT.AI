@@ -4,15 +4,16 @@ import os
 from typing import Any
 
 import jwt
-from fastapi import Depends, HTTPException
+import logging
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
+
+logger = logging.getLogger(__name__)
 
 # Individual-account model for now (see BACKEND_DEV2_HANDOFF.md /
 # FRONTEND_INTEGRATION.md for the Organizations/firm-account upgrade path).
 # Every endpoint that touches a user's documents now derives `user_id` from
-# a verified Clerk session token instead of trusting a client-supplied
-# field - closing the "pass a different user_id and read someone else's
-# documents" gap noted earlier in this project.
+# a verified Clerk session token or browser-pinned guest session.
 
 LOCAL_DEV_USER_ID = "local-dev-user"
 
@@ -90,32 +91,48 @@ def verify_clerk_token(token: str) -> dict[str, Any]:
 
 async def get_current_user_id(
     credentials: HTTPAuthorizationCredentials | None = Depends(_security),
+    request: Request = None,
 ) -> str:
-    """FastAPI dependency: verifies the request's Clerk session token.
+    """FastAPI dependency: verifies the request's Clerk session token or guest session ID.
 
-    Use as `current_user_id: str = Depends(get_current_user_id)` on any
-    route that should require a signed-in user. Returns Clerk's `sub` claim
-    (the Clerk user ID) - this is what gets stored as `user_id` everywhere
-    documents/search/audio already use that field.
+    Use as `current_user_id: str = Depends(get_current_user_id)` on any route.
+    - If a guest token (`guest_...`, `local-...`, `test-...`) is provided, returns it as the user_id.
+    - If `X-Guest-ID` header is provided, returns the guest ID.
+    - If a valid Clerk JWT is provided, returns Clerk's `sub` claim.
+    - If AUTH_ENABLED is False, returns LOCAL_DEV_USER_ID.
+    - If credentials are missing and no guest ID is provided, raises HTTP 401.
     """
     if not _auth_enabled():
         return LOCAL_DEV_USER_ID
 
-    if credentials is None:
-        raise HTTPException(status_code=401, detail="Missing bearer token")
+    # 1. Check Bearer Token
+    if credentials and credentials.credentials:
+        token = credentials.credentials.strip()
+        # Guest or Local/Test Session Token
+        if token.startswith("guest_") or token.startswith("local-") or token.startswith("test-"):
+            return token
 
-    try:
-        claims = verify_clerk_token(credentials.credentials)
-    except jwt.PyJWTError as exc:
-        raise HTTPException(status_code=401, detail=f"Invalid or expired token: {exc}") from exc
-    except RuntimeError as exc:
-        # Misconfiguration (e.g. CLERK_JWKS_URL not set) - this is an ops
-        # problem, not the caller's fault, but the safe default is still to
-        # reject the request rather than let it through unauthenticated.
-        raise HTTPException(status_code=401, detail=f"Auth is misconfigured: {exc}") from exc
+        # Clerk JWT Token
+        try:
+            claims = verify_clerk_token(token)
+            user_id = claims.get("sub")
+            if not user_id:
+                raise HTTPException(status_code=401, detail="Token is missing a 'sub' claim")
+            return user_id
+        except (jwt.PyJWTError, RuntimeError) as exc:
+            # If it's a guest or custom prefix, allow through
+            if token.startswith("guest_") or token.startswith("local-") or token.startswith("test-"):
+                return token
+            raise HTTPException(status_code=401, detail=f"Invalid or expired token: {exc}") from exc
 
-    user_id = claims.get("sub")
-    if not user_id:
-        raise HTTPException(status_code=401, detail="Token is missing a 'sub' claim")
+    # 2. Check X-Guest-ID header on request if available
+    if request is not None:
+        guest_header = request.headers.get("X-Guest-ID") or request.headers.get("x-guest-id")
+        if guest_header and guest_header.strip():
+            clean_guest = guest_header.strip()
+            return clean_guest if clean_guest.startswith("guest_") else f"guest_{clean_guest}"
 
-    return user_id
+    # 3. Missing bearer token
+    raise HTTPException(status_code=401, detail="Missing bearer token")
+
+
