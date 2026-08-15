@@ -98,7 +98,7 @@ def test_chat_stream_strict_contains_metadata_event(client) -> None:
 def test_chat_stream_strict_empty_context_yields_fallback(client) -> None:
     """When vector store has no matching chunks, the fallback string must appear in the stream."""
     with patch("app.api.routes.chat.LLMSynthesisService") as mock_llm_class:
-        async def _mock_stream(query, context_chunks):
+        async def _mock_stream(query, context_chunks, history=None, images=None):
             if not context_chunks:
                 yield "Information not found in the uploaded documents."
             else:
