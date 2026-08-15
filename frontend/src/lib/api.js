@@ -266,6 +266,11 @@ export const api = {
   // --- Billing endpoints
   getBillingPlan: () => request(`/api/v1/billing/plan`),
   startCheckout: (body) => request(`/api/v1/billing/checkout`, { method: "POST", body }),
+  verifyPayment: (reference, tier = null) =>
+    request(`/api/v1/billing/verify/${encodeURIComponent(reference)}`, {
+      method: "GET",
+    }),
+
 
   // --- Chambers / Teams
   createChambers: (name) => request(`/api/v1/chambers`, { method: "POST", body: { name } }),
