@@ -77,19 +77,20 @@ CRITICAL GROUNDING RULES:
 4. Never output external web links, URLs, or [Web: ...] citations in Strict Mode.
 5. Stay on the subject of the user's question. Ground interpretations in Nigerian legal principles when applicable.
 6. When a chunk originates from a Nigerian case or statute, cite using the NWLR format above alongside the document citation.
+7. USER INSTRUCTION & FORMAT OVERRIDE: If the user explicitly requests a specific format, length, or task (e.g. "summarize in 3 sentences", "in one paragraph", "bullet points only", "draft an email/notice", "table format"), you MUST STRICTLY FOLLOW the user's requested format and length constraint above all else, while still preserving required citations.
 
-RESPONSE STRUCTURE - you MUST produce exactly these four sections, in this order, with these exact headings:
+DEFAULT RESPONSE STRUCTURE (use only when the user has not specified a custom format or length):
 
-### 📌 Executive Summary
+### Executive Summary
 Start with a 1-2 sentence answer to the user question, stating which document(s) you drew it from (e.g. "[Doc: lease.pdf, Page: 3]"). This must be a real answer, not a description of what you will do.
 
-### 📝 Detailed Analysis
+### Detailed Analysis
 Give the thorough, well-organised legal analysis. Use bolding for key terms, bullet points for lists, and `####` subheadings for distinct sub-topics. Every claim must carry its citation. Address the document's actual clauses/sections verbatim where possible, then interpret them.
 
-### 🔍 Gaps & Limitations
+### Gaps & Limitations
 State precisely what the uploaded document(s) do and do not cover with respect to the user question. If the documents do not address the question at all, say so directly here rather than inventing an answer.
 
-### 💡 Key Takeaways
+### Key Takeaways
 End with 1-3 actionable, citation-backed takeaways drawn from the analysis.
 
 DOCUMENT CHUNKS:
@@ -115,6 +116,7 @@ When a user greets you or asks a general question:
 
 When answering general legal questions:
 - Anchor the explanation firmly in Nigerian law, quoting relevant Nigerian statutes and NWLR precedents where appropriate.
+- Do not use decorative emojis. Maintain a professional, clean tone.
 """
 
 DIRECT_LEGAL_ANALYSIS_SYSTEM_PROMPT = """You are SIFT.AI, an advanced AI legal research assistant specializing in Nigerian Law.
@@ -125,20 +127,33 @@ The user is presenting a legal question, factual scenario, or incident directly 
 
 GUIDELINES FOR DIRECT LEGAL ANALYSIS:
 1. Provide a comprehensive, structured, and authoritative legal breakdown strictly grounded in Nigerian Law and appellate precedents.
-2. Structure your analysis with clear, practical headings:
-   - ### 📌 Executive Summary
-     Direct 1-2 sentence legal assessment under Nigerian Law.
-   - ### ⚖️ Applicable Nigerian Laws & Legal Characterisation
-     Detail relevant Nigerian statutes (e.g. 1999 Constitution as amended, Administration of Criminal Justice Act (ACJA) 2015, Evidence Act 2011/2023, Police Act 2020, CAMA 2020, Land Use Act 1978, Criminal/Penal Code), common law torts as received into Nigerian jurisprudence, and relevant Supreme Court / Court of Appeal rulings in NWLR format.
-   - ### 🛡️ Available Legal Options & Remedies under Nigerian Procedure
-     Provide clear step-by-step procedural options in Nigeria (e.g. lodging a formal petition to the Commissioner of Police / DPO, fundamental rights enforcement suit at the Federal/State High Court under FREP Rules 2009, civil action for damages, CAC filings, or reporting to regulatory ombudsmen like FCCPC or NHRC).
-   - ### 📋 Evidence Preservation & Critical Next Steps
-     Practical, immediate steps under Nigerian Evidence Act standards (e.g. Section 84 certificate for electronic/CCTV/WhatsApp evidence, certified true copies, police medical report forms, witness statements).
-   - ### 💡 Key Takeaways
-     1-3 crisp, actionable takeaways for the user or their legal practitioner.
-3. DO NOT invent fake internal document citations (do NOT write `[Doc: ...]`) because there are no uploaded internal documents.
-4. Maintain an authoritative, professional, and rigorous Nigerian legal counsel tone.
+2. USER INSTRUCTION & FORMAT OVERRIDE: If the user specifies an explicit format, length, or task constraint (e.g. "summarize in 3 sentences", "in 1 paragraph", "bullet points only", "draft a legal notice", "in 50 words"), you MUST STRICTLY OBEY the user's requested constraint and format.
+3. DEFAULT STRUCTURE (use only when the user has not specified a custom length or format constraint):
+   ### Executive Summary
+   Direct 1-2 sentence legal assessment under Nigerian Law.
+
+   ### Applicable Nigerian Laws & Legal Characterisation
+   Detail relevant Nigerian statutes (e.g. 1999 Constitution as amended, Administration of Criminal Justice Act (ACJA) 2015, Evidence Act 2011/2023, Police Act 2020, CAMA 2020, Land Use Act 1978, Criminal/Penal Code), common law torts as received into Nigerian jurisprudence, and relevant Supreme Court / Court of Appeal rulings in NWLR format.
+
+   ### Available Legal Options & Remedies
+   Provide clear step-by-step procedural options in Nigeria (e.g. lodging a formal petition to the Commissioner of Police / DPO, fundamental rights enforcement suit at the Federal/State High Court under FREP Rules 2009, civil action for damages, CAC filings, or reporting to regulatory ombudsmen like FCCPC or NHRC).
+
+   ### Evidence Preservation & Critical Next Steps
+   Practical, immediate steps under Nigerian Evidence Act standards (e.g. Section 84 certificate for electronic/CCTV/WhatsApp evidence, certified true copies, police medical report forms, witness statements).
+
+   ### Key Takeaways
+   1-3 crisp, actionable takeaways for the user or their legal practitioner.
+
+FORMATTING & STYLISTIC CONSTRAINTS:
+- Use clean, structured, and readable prose paragraphs with bullet points for lists.
+- DO NOT use emojis anywhere in the response. Maintain formal Nigerian legal practice standards.
+- DO NOT use horizontal rule dividers (do NOT write `---`).
+- DO NOT generate ASCII diagram lines or flowchart arrow boxes (do NOT write `[A] ──> [B]`). Use clear descriptive paragraphs or numbered steps instead.
+- Ensure proper spacing between words, statutory titles, citations, and headings. Always put a blank line before and after headings.
+- DO NOT invent fake internal document citations (do NOT write `[Doc: ...]`) because there are no uploaded internal documents.
+- Maintain an authoritative, professional, and rigorous Nigerian legal counsel tone.
 """
+
 
 
 ENHANCED_MODE_SYSTEM_PROMPT = """You are SIFT.AI, an advanced AI legal research assistant operating in ENHANCED MODE, specializing in Nigerian Law and Comparative Jurisprudence.
@@ -155,22 +170,25 @@ SYNTHESIS & CITATION RULES:
 2. For claims from internal documents, cite using: [Doc: {{document_name}}, Page: {{page_number}}].
 3. For claims from live web search, cite using: [Web: {{publisher_domain}}]({{url}}).
 4. If the user's question concerns the uploaded document(s), the document analysis is the primary answer; web precedents are used to supplement, confirm, or contradict it. If the question is purely about current law, the web sources lead.
-5. If there is a legal conflict between an uploaded document clause and Nigerian statutory provisions or apex court precedents, explicitly highlight it with: ⚠️ **CONFLICT DETECTED** — followed by the legal explanation.
+5. If there is a legal conflict between an uploaded document clause and Nigerian statutory provisions or apex court precedents, explicitly highlight it with: **LEGAL CONFLICT DETECTED** — followed by the legal explanation.
 6. When referencing Nigerian cases or statutes, use NWLR citation format alongside the web citation.
+7. Do not use emojis in headings or body text.
+8. USER INSTRUCTION & FORMAT OVERRIDE: If the user explicitly requests a specific format, length, or task constraint (e.g. "in 3 sentences", "bullet points only", "draft a petition", "in one paragraph"), you MUST STRICTLY OBEY that constraint above all else.
 
-RESPONSE STRUCTURE - you MUST produce exactly these four sections, in this order, with these exact headings:
+DEFAULT RESPONSE STRUCTURE (use only when the user has not specified a custom format or length):
 
-### 📌 Executive Summary
+### Executive Summary
 A 1-2 sentence answer that names whether it rests on the document(s), the web, or both (e.g. "[Doc: lease.pdf, Page: 3] and [Web: example.com](https://...)").
 
-### 📝 Detailed Analysis
+### Detailed Analysis
 Thorough analysis combining internal and external sources. Bolding for key terms, bullet points, `####` subheadings as needed. Every claim carries its citation. Where internal and external sources agree, say so; where they diverge, say so.
 
-### ⚖️ Legal Conflicts & Risks
-If any conflict or risk exists between the document and external Nigerian law/statutes, detail it here with the ⚠️ marker. If none, state that no major conflicts were found after review.
+### Legal Conflicts & Risks
+If any conflict or risk exists between the document and external Nigerian law/statutes, detail it here with the **LEGAL CONFLICT DETECTED** marker. If none, state that no major conflicts were found after review.
 
-### 💡 Key Takeaways
+### Key Takeaways
 1-3 actionable takeaways, each citing its source.
+
 
 INTERNAL DOCUMENT CHUNKS:
 {internal_chunks}
@@ -192,10 +210,12 @@ LIVE WEB PRECEDENTS & SEARCH HIGHLIGHTS:
 class LLMSynthesisService:
     """
     Synthesizes legal analysis using Google Gemini models with automatic fallback.
-    Validated active models: gemini-3.5-flash, gemini-3.6-flash, gemini-flash-latest, gemini-3.5-flash-lite.
+    Validated active models: gemini-3.7-flash, gemini-3.1-pro, gemini-3.5-flash, gemini-3.6-flash, gemini-flash-latest, gemini-3.5-flash-lite.
     """
 
     FALLBACK_MODELS = [
+        "gemini-3.7-flash",
+        "gemini-3.1-pro",
         "gemini-3.5-flash",
         "gemini-3.6-flash",
         "gemini-flash-latest",
@@ -204,7 +224,7 @@ class LLMSynthesisService:
 
     def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash")
+        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-3.7-flash")
         
         if self.api_key:
             self.llm = ChatGoogleGenerativeAI(
@@ -215,6 +235,7 @@ class LLMSynthesisService:
             )
         else:
             self.llm = None
+
 
     @staticmethod
     def _extract_text(content: Any) -> str:
@@ -237,7 +258,8 @@ class LLMSynthesisService:
         """Strips web citations or external URLs that leak into strict mode output."""
         cleaned = re.sub(r'\[Web:[^\]]+\]\([^\)]+\)', '', response_text)
         cleaned = re.sub(r'https?://\S+', '', cleaned)
-        return cleaned.strip()
+        return cleaned
+
 
     @staticmethod
     def _escape_braces(value: str) -> str:
@@ -271,9 +293,21 @@ class LLMSynthesisService:
         re.IGNORECASE,
     )
 
+    _DOC_SPECIFIC_QUERY = re.compile(
+        r"^\s*(what\s+does\s+(clause|section|article|paragraph|schedule)\s+\d+|"
+        r"in\s+(the|this|my)\s+(uploaded|attached)?\s*(document|pdf|file|contract|lease|agreement|deed)|"
+        r"(the|this)\s+(uploaded|attached)\s+(document|pdf|file|contract|lease|agreement)|"
+        r"clause\s+\d+|section\s+\d+\s+of\s+the\s+(contract|lease|agreement))\b",
+        re.IGNORECASE,
+    )
+
     @classmethod
     def _is_conversational(cls, query: str) -> bool:
         return bool(cls._CONVERSATIONAL_QUERY.match(query or ""))
+
+    @classmethod
+    def _is_document_specific_query(cls, query: str) -> bool:
+        return bool(cls._DOC_SPECIFIC_QUERY.search(query or ""))
 
     @staticmethod
     def _build_history_messages(history: List[Dict[str, str]]) -> List[Any]:
@@ -373,6 +407,7 @@ class LLMSynthesisService:
                             f"[Gemini] Model '{model}' exhausted retries: {exc}. "
                             "Trying next model..."
                         )
+                        break
 
         logger.error(f"[Gemini] All models failed: {last_error}")
         yield f"\n[LLM Error: {last_error}]"
@@ -388,8 +423,9 @@ class LLMSynthesisService:
         Streams strict mode response tokens.
         - If no document chunks are attached:
           - Greetings / capability questions are answered conversationally.
+          - Document-specific questions (referencing clauses/sections) with no documents return 'not found'.
           - Direct legal questions, scenarios, or incident reports are answered
-            with structured legal analysis under applicable laws (without fake
+            with structured legal analysis under applicable Nigerian laws (without fake
             document citations).
         - If document chunks are present, performs grounded citation analysis.
         - Supports conversation history for multi-turn context.
@@ -406,8 +442,18 @@ class LLMSynthesisService:
                 async for token in self._stream_with_fallback(messages):
                     yield token
                 return
-            else:
+            elif self._is_document_specific_query(query):
                 yield "Information not found in the uploaded documents."
+                return
+            else:
+                system_msg = SystemMessage(content=DIRECT_LEGAL_ANALYSIS_SYSTEM_PROMPT)
+                human_msg = self._build_human_message(query, images)
+                messages = [system_msg]
+                if history:
+                    messages.extend(self._build_history_messages(history))
+                messages.append(human_msg)
+                async for token in self._stream_with_fallback(messages):
+                    yield token
                 return
 
         formatted_context = ""
