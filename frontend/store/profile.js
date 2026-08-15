@@ -1,7 +1,7 @@
 import { create } from 'zustand';
 import { api } from '../src/lib/api';
 
-export const useProfile = create((set, get) => ({
+export const useProfile = create((set) => ({
   profile: null,
   loading: false,
   error: null,
