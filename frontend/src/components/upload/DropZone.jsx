@@ -1,6 +1,6 @@
 import { useCallback } from "react";
 import { useDropzone } from "react-dropzone";
-import { UploadCloud, FileText } from "lucide-react";
+import { UploadCloud, FileText, Image as ImageIcon } from "lucide-react";
 
 import { useUpload } from "../../../store/upload";
 
@@ -29,6 +29,10 @@ function DropZone() {
     multiple: true,
     accept: {
       "application/pdf": [".pdf"],
+      "image/png": [".png"],
+      "image/jpeg": [".jpg", ".jpeg"],
+      "image/webp": [".webp"],
+      "image/tiff": [".tiff", ".tif"],
     },
     maxSize: 20 * 1024 * 1024,
     onDragEnter: () => setDragging(true),
@@ -47,7 +51,6 @@ function DropZone() {
       <input {...getInputProps()} />
 
       <div className="flex flex-col items-center text-center">
-
         <div
           className={`mb-6 flex h-20 w-20 items-center justify-center rounded-3xl transition ${
             isDragActive
@@ -60,20 +63,26 @@ function DropZone() {
 
         <h2 className="text-xl font-semibold text-text">
           {isDragActive
-            ? "Drop your PDFs here"
-            : "Upload PDF Documents"}
+            ? "Drop your files here"
+            : "Upload Legal Documents or Evidence Images"}
         </h2>
 
         <p className="mt-3 max-w-md text-sm leading-7 text-textMuted">
-          Drag & drop one or more PDFs here, or click to browse.
+          Drag & drop PDFs or contract photos/scans (PNG, JPG, WebP) here, or click to browse.
           Maximum file size is 20MB.
         </p>
 
-        <div className="mt-8 flex items-center gap-2 rounded-full bg-surface px-4 py-2 text-sm text-textMuted">
-          <FileText size={16} />
-          PDF files only
+        <div className="mt-8 flex items-center gap-3 rounded-full bg-surface px-4 py-2 text-xs font-medium text-textMuted border border-border">
+          <div className="flex items-center gap-1">
+            <FileText size={14} className="text-primary" />
+            <span>PDF</span>
+          </div>
+          <span>•</span>
+          <div className="flex items-center gap-1">
+            <ImageIcon size={14} className="text-emerald-500" />
+            <span>PNG, JPG, WebP, TIFF (OCR Extracted)</span>
+          </div>
         </div>
-
       </div>
     </div>
   );
