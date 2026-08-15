@@ -165,3 +165,41 @@ def test_webhook_ignores_non_charge_events(raw_client, monkeypatch) -> None:
     )
     assert res.status_code == 200
     assert res.json()["status"] == "ignored"
+
+
+# ---------------------------------------------------------------- verify
+
+def test_verify_mock_upgrades_chambers_tier(client, as_user, monkeypatch) -> None:
+    monkeypatch.delenv("PAYSTACK_SECRET_KEY", raising=False)
+    as_user("verify-principal")
+    cid = client.post("/api/v1/chambers", json={"name": "Verify Chambers"}).json()["chambers_id"]
+
+    # Initial tier is FREE
+    assert client.get("/api/v1/billing/plan").json()["tier"] == "FREE"
+
+    # Verify callback endpoint
+    res = client.get("/api/v1/billing/verify/sift_test_ref_123")
+    assert res.status_code == 200
+    body = res.json()
+    assert body["status"] == "success"
+    assert body["tier"] == "PRO"
+    assert body["chambers_id"] == cid
+
+    # Billing plan is now PRO
+    assert client.get("/api/v1/billing/plan").json()["tier"] == "PRO"
+
+
+def test_verify_post_custom_tier(client, as_user, monkeypatch) -> None:
+    monkeypatch.delenv("PAYSTACK_SECRET_KEY", raising=False)
+    as_user("verify-post-user")
+    cid = client.post("/api/v1/chambers", json={"name": "Starter Verify Chambers"}).json()["chambers_id"]
+
+    res = client.post("/api/v1/billing/verify", json={"reference": "sift_starter_1", "tier": "STARTER"})
+    assert res.status_code == 200
+    assert res.json()["tier"] == "STARTER"
+    assert client.get("/api/v1/billing/plan").json()["tier"] == "STARTER"
+
+
+def test_verify_requires_auth(raw_client) -> None:
+    assert raw_client.get("/api/v1/billing/verify/sift_xyz").status_code == 401
+

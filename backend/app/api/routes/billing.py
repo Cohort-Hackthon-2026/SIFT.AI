@@ -247,6 +247,135 @@ async def checkout(
     }
 
 
+class VerifyPaymentRequest(BaseModel):
+    reference: str = Field(min_length=1, max_length=128)
+    tier: str | None = Field(default=None, max_length=16)
+    chambers_id: str | None = Field(default=None)
+
+
+async def _apply_upgrade(
+    request: Request,
+    user_id: str,
+    chambers_id: str,
+    tier: str,
+    reference: str,
+) -> dict:
+    normalized_tier = entitlements.normalize_tier(tier)
+    chambers_registry = getattr(request.app.state, "chambers_registry", None)
+    billing = getattr(request.app.state, "billing_registry", None)
+    if chambers_registry is not None:
+        await chambers_registry.set_tier(chambers_id, normalized_tier)
+    if billing is not None:
+        await billing.create_subscription(
+            chambers_id=chambers_id,
+            tier=normalized_tier,
+            status="ACTIVE",
+            period_start=datetime.now(timezone.utc),
+            external_ref=reference,
+        )
+
+    audit = getattr(request.app.state, "audit_registry", None)
+    if audit is not None:
+        try:
+            await audit.record(
+                user_id,
+                "BILLING_UPGRADE",
+                chambers_id=chambers_id,
+                detail={"tier": normalized_tier, "reference": reference},
+            )
+        except Exception as exc:
+            logger.warning("audit BILLING_UPGRADE failed: %s", exc)
+
+    logger.info("Chambers %s upgraded to %s (ref %s)", chambers_id, normalized_tier, reference)
+    return {"status": "success", "chambers_id": chambers_id, "tier": normalized_tier, "reference": reference}
+
+
+@router.get("/verify/{reference}")
+async def verify_payment_get(
+    reference: str,
+    request: Request,
+    current_user_id: str = Depends(get_current_user_id),
+) -> dict:
+    """Verify Paystack transaction by reference path param and upgrade chambers."""
+    return await _handle_verify(reference=reference, payload=None, request=request, current_user_id=current_user_id)
+
+
+@router.post("/verify")
+async def verify_payment_post(
+    payload: VerifyPaymentRequest,
+    request: Request,
+    current_user_id: str = Depends(get_current_user_id),
+) -> dict:
+    """Verify Paystack transaction by body payload and upgrade chambers."""
+    return await _handle_verify(reference=payload.reference, payload=payload, request=request, current_user_id=current_user_id)
+
+
+async def _handle_verify(
+    reference: str,
+    payload: VerifyPaymentRequest | None,
+    request: Request,
+    current_user_id: str,
+) -> dict:
+    if not reference:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Transaction reference is required for verification.",
+        )
+
+    profiles = _registry(request, "profile_registry")
+    profile = await profiles.get_profile(current_user_id)
+    chambers_id = (payload.chambers_id if payload else None) or (profile or {}).get("chambers_id")
+
+    secret = _paystack_secret()
+    if not secret:
+        # Mock / local dev mode: verify immediately
+        tier = (payload.tier if payload else None) or "PRO"
+        if not chambers_id:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="User has no chambers assigned to upgrade.",
+            )
+        return await _apply_upgrade(request, current_user_id, chambers_id, tier, reference)
+
+    import httpx
+
+    verify_url = f"https://api.paystack.co/transaction/verify/{reference}"
+    try:
+        async with httpx.AsyncClient(timeout=20.0) as http:
+            resp = await http.get(
+                verify_url,
+                headers={"Authorization": f"Bearer {secret}", "Content-Type": "application/json"},
+            )
+        resp.raise_for_status()
+        res_json = resp.json()
+    except Exception as exc:
+        logger.error("Paystack transaction verification failed: %s", exc)
+        raise HTTPException(
+            status_code=status.HTTP_502_BAD_GATEWAY,
+            detail="Could not reach payment provider to verify transaction.",
+        ) from exc
+
+    if not res_json.get("status") or (res_json.get("data", {}) or {}).get("status") != "success":
+        gateway_msg = (res_json.get("data", {}) or {}).get("gateway_response") or "Transaction was not successful."
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Payment verification failed: {gateway_msg}",
+        )
+
+    tx_data = res_json.get("data", {}) or {}
+    metadata = tx_data.get("metadata", {}) or {}
+    meta_chambers_id = metadata.get("chambers_id") or chambers_id
+    meta_tier = metadata.get("tier") or (payload.tier if payload else None) or "PRO"
+
+    if not meta_chambers_id:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Verified transaction has no associated chambers ID.",
+        )
+
+    return await _apply_upgrade(request, current_user_id, meta_chambers_id, meta_tier, reference)
+
+
 @router.post("/webhook")
 async def paystack_webhook(request: Request) -> dict:
     """Paystack webhook: verified by HMAC-SHA512 signature, not an auth header.
@@ -287,25 +416,5 @@ async def paystack_webhook(request: Request) -> dict:
         logger.error("webhook charge.success missing/invalid metadata: %s", metadata)
         return {"status": "ignored", "reason": "missing chambers_id/tier"}
 
-    chambers_registry = getattr(request.app.state, "chambers_registry", None)
-    billing = getattr(request.app.state, "billing_registry", None)
-    if chambers_registry is not None:
-        await chambers_registry.set_tier(chambers_id, tier)
-    if billing is not None:
-        await billing.create_subscription(
-            chambers_id=chambers_id, tier=tier, status="ACTIVE",
-            period_start=datetime.now(timezone.utc), external_ref=reference,
-        )
-
-    audit = getattr(request.app.state, "audit_registry", None)
-    if audit is not None:
-        try:
-            await audit.record(
-                metadata.get("user_id", "system"), "BILLING_UPGRADE",
-                chambers_id=chambers_id, detail={"tier": tier, "reference": reference},
-            )
-        except Exception as exc:
-            logger.warning("audit BILLING_UPGRADE failed: %s", exc)
-
-    logger.info("Chambers %s upgraded to %s (ref %s)", chambers_id, tier, reference)
-    return {"status": "ok", "chambers_id": chambers_id, "tier": tier}
+    res = await _apply_upgrade(request, metadata.get("user_id", "system"), chambers_id, tier, reference or "")
+    return {"status": "ok", "chambers_id": chambers_id, "tier": res.get("tier", tier)}
