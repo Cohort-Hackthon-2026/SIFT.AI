@@ -22,7 +22,9 @@ import hmac
 import json
 import logging
 import os
+import calendar
 from datetime import datetime, timezone
+from typing import Any
 from uuid import uuid4
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
@@ -75,6 +77,50 @@ def _paystack_callback_url() -> str | None:
     return os.getenv("PAYSTACK_CALLBACK_URL") or None
 
 
+def _parse_iso(val: Any) -> datetime | None:
+    if isinstance(val, datetime):
+        return val if val.tzinfo else val.replace(tzinfo=timezone.utc)
+    if isinstance(val, str):
+        try:
+            dt = datetime.fromisoformat(val.replace("Z", "+00:00"))
+            return dt if dt.tzinfo else dt.replace(tzinfo=timezone.utc)
+        except Exception:
+            return None
+    return None
+
+
+def _add_months(dt: datetime, months: int) -> datetime:
+    """Add or subtract integer months preserving day of month where possible."""
+    year = dt.year + (dt.month - 1 + months) // 12
+    month = (dt.month - 1 + months) % 12 + 1
+    max_days = calendar.monthrange(year, month)[1]
+    day = min(dt.day, max_days)
+    return dt.replace(year=year, month=month, day=day)
+
+
+def _get_current_cycle(anchor_date: datetime, now: datetime | None = None) -> tuple[datetime, datetime]:
+    """Calculate the (period_start, next_renewal) for the current active monthly cycle.
+    E.g. if subscribed or joined on August 15th and today is August 15th,
+    the active cycle runs Aug 15th to Sep 15th (next renewal).
+    """
+    if now is None:
+        now = datetime.now(timezone.utc)
+    if not anchor_date.tzinfo:
+        anchor_date = anchor_date.replace(tzinfo=timezone.utc)
+
+    if anchor_date >= now:
+        return anchor_date, _add_months(anchor_date, 1)
+
+    months_diff = (now.year - anchor_date.year) * 12 + (now.month - anchor_date.month)
+    current_start = _add_months(anchor_date, months_diff)
+    if current_start > now:
+        months_diff -= 1
+        current_start = _add_months(anchor_date, months_diff)
+
+    next_renewal = _add_months(current_start, 1)
+    return current_start, next_renewal
+
+
 def _month_start() -> datetime:
     now = datetime.now(timezone.utc)
     return now.replace(day=1, hour=0, minute=0, second=0, microsecond=0)
@@ -103,8 +149,32 @@ async def get_plan(
     tier, chambers_id = await entitlements.resolve_effective_tier(current_user_id, profiles, chambers_registry)
     ent = entitlements.get_entitlements(tier)
 
+    # Active subscription check for chambers
+    sub = None
+    if chambers_id:
+        sub = await billing.get_active_subscription(chambers_id)
+
+    # Determine monthly cycle anchor (subscription start or profile creation date)
+    now = datetime.now(timezone.utc)
+    anchor_date = None
+    if sub and (sub.get("period_start") or sub.get("created_at")):
+        anchor_date = _parse_iso(sub.get("period_start") or sub.get("created_at"))
+
+    if anchor_date is None:
+        try:
+            user_profile = await profiles.get(current_user_id)
+            if user_profile and user_profile.get("created_at"):
+                anchor_date = _parse_iso(user_profile["created_at"])
+        except Exception:
+            anchor_date = None
+
+    if anchor_date is None:
+        anchor_date = now
+
+    cycle_start, next_renewal = _get_current_cycle(anchor_date, now=now)
+    since = cycle_start
+
     # Usage is chambers-wide when the user is in a chambers, else personal.
-    since = _month_start()
     if chambers_id:
         used = await billing.usage_summary(chambers_id=chambers_id, since=since)
     else:
@@ -119,11 +189,20 @@ async def get_plan(
             "remaining": entitlements.remaining_quota(tier, event_type, consumed),
         }
 
+    period_start = cycle_start.isoformat()
+    renewal_date = next_renewal.isoformat()
+
     return {
         "tier": tier,
         "chambers_id": chambers_id,
         "entitlements": ent,
-        "usage": {"period_start": since.isoformat(), "quotas": quotas},
+        "subscription": sub,
+        "usage": {
+            "period_start": period_start,
+            "period_end": renewal_date,
+            "renewal_date": renewal_date,
+            "quotas": quotas,
+        },
         "plans": PLAN_CATALOG,
     }
 
@@ -266,11 +345,14 @@ async def _apply_upgrade(
     if chambers_registry is not None:
         await chambers_registry.set_tier(chambers_id, normalized_tier)
     if billing is not None:
+        now = datetime.now(timezone.utc)
+        period_end = _add_months(now, 1)
         await billing.create_subscription(
             chambers_id=chambers_id,
             tier=normalized_tier,
             status="ACTIVE",
-            period_start=datetime.now(timezone.utc),
+            period_start=now,
+            period_end=period_end,
             external_ref=reference,
         )
 
