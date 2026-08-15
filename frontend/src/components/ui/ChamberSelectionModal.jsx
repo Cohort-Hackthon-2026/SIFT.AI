@@ -2,7 +2,7 @@ import React, { useState } from "react";
 import { useUI } from "../../../store/ui";
 import { useProfile } from "../../../store/profile";
 import { api } from "../../lib/api";
-import { Check, Plus, LogIn } from "lucide-react";
+import { Check, Plus, LogIn, X } from "lucide-react";
 
 export default function ChamberSelectionModal() {
   const { chamberSelectionModalOpen, closeChamberSelectionModal } = useUI();
@@ -55,6 +55,9 @@ export default function ChamberSelectionModal() {
 
   return (
     <div
+      onClick={(e) => {
+        if (e.target === e.currentTarget && !loading) closeChamberSelectionModal();
+      }}
       style={{
         position: "fixed",
         inset: 0,
@@ -84,6 +87,34 @@ export default function ChamberSelectionModal() {
             'system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
         }}
       >
+        {/* Close Button */}
+        <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+          <button
+            type="button"
+            onClick={closeChamberSelectionModal}
+            disabled={loading}
+            aria-label="Close"
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              width: 32,
+              height: 32,
+              borderRadius: 10,
+              border: "1px solid var(--border, #e2e8f0)",
+              background: "transparent",
+              color: "var(--text-muted, #999)",
+              cursor: loading ? "not-allowed" : "pointer",
+              opacity: loading ? 0.5 : 1,
+              transition: "all 0.15s ease",
+            }}
+            onMouseEnter={(e) => { e.currentTarget.style.background = "var(--background, #f1f5f9)"; e.currentTarget.style.color = "var(--text)"; }}
+            onMouseLeave={(e) => { e.currentTarget.style.background = "transparent"; e.currentTarget.style.color = "var(--text-muted, #999)"; }}
+          >
+            <X size={16} />
+          </button>
+        </div>
+
         {/* Header Icon */}
         <div
           style={{
