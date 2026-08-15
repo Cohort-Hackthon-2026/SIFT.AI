@@ -1,5 +1,16 @@
 import { useEffect, useState } from "react";
-import { Plus, MessageSquare, PanelLeftClose, Settings, Zap, Briefcase, ChevronDown, ChevronRight, FolderPlus, X } from "lucide-react";
+import {
+  Plus,
+  MessageSquare,
+  PanelLeftClose,
+  Settings,
+  Zap,
+  Briefcase,
+  ChevronDown,
+  ChevronRight,
+  FolderPlus,
+  X,
+} from "lucide-react";
 import { useNavigate } from "react-router-dom";
 import { useAuth, useClerk, useUser } from "@clerk/react";
 
@@ -48,13 +59,15 @@ function Sidebar({ isOpen, onClose }) {
     if (isSignedIn) {
       void loadChats();
       void fetchMatters();
-      fetchPlan().catch(() => {});
+      if (!plan) {
+        fetchPlan().catch(() => {});
+      }
     } else {
       useChat.getState().setChats([]);
       useChat.getState().setActiveChatId(null);
       useChat.getState().clearMessages();
     }
-  }, [isSignedIn, loadChats, fetchMatters, fetchPlan]);
+  }, [isSignedIn, loadChats, fetchMatters, fetchPlan, plan]);
 
   const handleNewChat = async () => {
     if (!isSignedIn) {
@@ -112,7 +125,8 @@ function Sidebar({ isOpen, onClose }) {
           <div>
             <p className="text-sm font-semibold text-text">Workspace</p>
             <p className="mt-1 text-xs text-textMuted">
-              {documents.length} document{documents.length !== 1 ? "s" : ""} loaded
+              {documents.length} document{documents.length !== 1 ? "s" : ""}{" "}
+              loaded
             </p>
           </div>
 
@@ -255,7 +269,10 @@ function Sidebar({ isOpen, onClose }) {
         <div className="shrink-0 border-t border-border bg-surface/95 px-4 py-3 backdrop-blur-xl space-y-2">
           <button
             type="button"
-            onClick={() => { navigate("/settings"); onClose?.(); }}
+            onClick={() => {
+              navigate("/settings");
+              onClose?.();
+            }}
             className="flex w-full items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium text-textMuted transition hover:bg-background hover:text-text"
           >
             <Settings size={18} />
@@ -265,7 +282,10 @@ function Sidebar({ isOpen, onClose }) {
           {isSignedIn && (plan?.tier === "FREE" || !plan?.tier) && (
             <button
               type="button"
-              onClick={() => { openBillingModal(); onClose?.(); }}
+              onClick={() => {
+                openBillingModal();
+                onClose?.();
+              }}
               className="flex w-full items-center justify-center gap-2 rounded-xl px-3 py-2.5 text-sm font-medium bg-primary text-textInverse shadow-md shadow-primary/20 transition hover:opacity-90 active:scale-98"
             >
               <Zap size={16} />
@@ -274,7 +294,14 @@ function Sidebar({ isOpen, onClose }) {
           )}
         </div>
 
-        {isSignedIn && <SidebarFooter email={email} imageUrl={user?.imageUrl} onLogout={handleLogout} isSigningOut={isSigningOut} />}
+        {isSignedIn && (
+          <SidebarFooter
+            email={email}
+            imageUrl={user?.imageUrl}
+            onLogout={handleLogout}
+            isSigningOut={isSigningOut}
+          />
+        )}
       </aside>
 
       {/* New Matter Modal */}

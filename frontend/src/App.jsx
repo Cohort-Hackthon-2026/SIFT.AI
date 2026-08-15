@@ -11,6 +11,7 @@ import { applyThemeColors } from "../utils/Colors";
 import Chat from "./Pages/Chat";
 import NotFound from "./Pages/NotFound";
 import Settings from "./Pages/Settings";
+import BillingCallbackComplete from "./Pages/BillingCallbackComplete";
 
 import AuthModal from "./components/auth/AuthModal";
 import AuthBridge from "./components/auth/AuthBridge";
@@ -31,7 +32,13 @@ function App() {
   const { isLoaded, isSignedIn } = useClerkAuth();
   const fetchDocuments = useDocuments((s) => s.fetchDocuments);
   const { profile, fetchProfile, loading: profileLoading } = useProfile();
-  const { openRoleSelectionModal, roleSelectionModalOpen, openChamberSelectionModal, chamberSelectionModalOpen, openBillingModal } = useUI();
+  const {
+    openRoleSelectionModal,
+    roleSelectionModalOpen,
+    openChamberSelectionModal,
+    chamberSelectionModalOpen,
+    openBillingModal,
+  } = useUI();
   const roleSelectionPromptedRef = useRef(false);
   const chamberSelectionPromptedRef = useRef(false);
 
@@ -60,12 +67,23 @@ function App() {
       return;
     }
 
-    const hasRole = profile.role && profile.role.trim() !== '';
-    if (!hasRole && !roleSelectionPromptedRef.current && !roleSelectionModalOpen) {
+    const hasRole = profile.role && profile.role.trim() !== "";
+    if (
+      !hasRole &&
+      !roleSelectionPromptedRef.current &&
+      !roleSelectionModalOpen
+    ) {
       roleSelectionPromptedRef.current = true;
       openRoleSelectionModal();
     }
-  }, [isLoaded, isSignedIn, profile, profileLoading, roleSelectionModalOpen, openRoleSelectionModal]);
+  }, [
+    isLoaded,
+    isSignedIn,
+    profile,
+    profileLoading,
+    roleSelectionModalOpen,
+    openRoleSelectionModal,
+  ]);
 
   // Show chamber selection modal once per sign-in when the user has role but no chambers
   useEffect(() => {
@@ -78,25 +96,43 @@ function App() {
       return;
     }
 
-    const hasRole = profile.role && profile.role.trim() !== '';
+    const hasRole = profile.role && profile.role.trim() !== "";
     const hasChambers = Boolean(profile.chambers_id);
 
-    if (hasRole && !hasChambers && !chamberSelectionPromptedRef.current && !chamberSelectionModalOpen) {
+    if (
+      hasRole &&
+      !hasChambers &&
+      !chamberSelectionPromptedRef.current &&
+      !chamberSelectionModalOpen
+    ) {
       chamberSelectionPromptedRef.current = true;
       openChamberSelectionModal();
     }
-  }, [isLoaded, isSignedIn, profile, profileLoading, roleSelectionModalOpen, chamberSelectionModalOpen, openChamberSelectionModal]);
+  }, [
+    isLoaded,
+    isSignedIn,
+    profile,
+    profileLoading,
+    roleSelectionModalOpen,
+    chamberSelectionModalOpen,
+    openChamberSelectionModal,
+  ]);
 
   // Show billing modal after both role and chambers are set
   useEffect(() => {
     if (!roleSelectionModalOpen && !chamberSelectionModalOpen && profile) {
-      const hasRole = profile.role && profile.role.trim() !== '';
+      const hasRole = profile.role && profile.role.trim() !== "";
       const hasChambers = Boolean(profile.chambers_id);
       if (hasRole && hasChambers) {
         openBillingModal();
       }
     }
-  }, [roleSelectionModalOpen, chamberSelectionModalOpen, profile, openBillingModal]);
+  }, [
+    roleSelectionModalOpen,
+    chamberSelectionModalOpen,
+    profile,
+    openBillingModal,
+  ]);
 
   useEffect(() => {
     if (isLoaded && !isSignedIn && !welcomeDismissed) {
@@ -114,18 +150,18 @@ function App() {
       <ChamberSelectionModal />
       <BillingModal />
 
-      {(!isSignedIn && welcomeVisible) && (
-        <AuthModal
-          onClose={closeWelcome}
-        />
-      )}
+      {!isSignedIn && welcomeVisible && <AuthModal onClose={closeWelcome} />}
 
       <BrowserRouter>
         <AuthBridge />
-        
+
         <Routes>
           <Route path="/" element={<Chat />} />
           <Route path="/settings" element={<Settings />} />
+          <Route
+            path="/billing/checkout/complete"
+            element={<BillingCallbackComplete />}
+          />
           <Route path="*" element={<NotFound />} />
         </Routes>
       </BrowserRouter>
