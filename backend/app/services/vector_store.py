@@ -240,9 +240,9 @@ class AhnlichVectorStoreService:
         try:
             async with Channel(host=host, port=port) as channel:
                 client = AiServiceStub(channel)
-                # Timeout after 10 seconds — ahnlich runs via QEMU emulation on
-                # Apple Silicon which adds startup latency beyond the old 3s budget.
-                response = await asyncio.wait_for(client.list_stores(ai_query.ListStores()), timeout=10.0)
+                # Timeout after 30 seconds — ahnlich runs via QEMU emulation on
+                # Apple Silicon which adds significant startup/inference latency.
+                response = await asyncio.wait_for(client.list_stores(ai_query.ListStores()), timeout=30.0)
                 existing_stores = {store.name for store in response.stores}
 
                 if self._store_name not in existing_stores:
@@ -257,7 +257,7 @@ class AhnlichVectorStoreService:
                                 store_original=True,
                             )
                         ),
-                        timeout=15.0
+                        timeout=45.0
                     )
                 self._clear_last_error()
         except Exception as exc:
@@ -300,7 +300,7 @@ class AhnlichVectorStoreService:
                             preprocess_action=PreprocessAction.ModelPreprocessing,
                         )
                     ),
-                    timeout=10.0
+                    timeout=30.0
                 )
                 self._clear_last_error()
         except Exception as exc:
@@ -338,7 +338,7 @@ class AhnlichVectorStoreService:
                             condition=condition,
                         )
                     ),
-                    timeout=5.0
+                    timeout=30.0
                 )
                 self._clear_last_error()
 
@@ -385,7 +385,7 @@ class AhnlichVectorStoreService:
                 # single round trip - no need to get_pred + del_key.
                 await asyncio.wait_for(
                     client.del_pred(ai_query.DelPred(store=self._store_name, condition=condition)),
-                    timeout=5.0
+                    timeout=15.0
                 )
                 self._clear_last_error()
         except Exception as exc:

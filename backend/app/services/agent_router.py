@@ -26,7 +26,7 @@ class AgentRouterService:
 
     def __init__(self, api_key: Optional[str] = None, model_name: Optional[str] = None):
         self.api_key = api_key or os.getenv("GEMINI_API_KEY")
-        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-3.5-flash")
+        self.model_name = model_name or os.getenv("DEFAULT_LLM_MODEL", "gemini-3.7-flash")
         
         if self.api_key:
             self.llm = ChatGoogleGenerativeAI(
@@ -90,9 +90,10 @@ class AgentRouterService:
             context_summary += chunk.get("text", "")[:200] + " "
 
         system_prompt = (
-            "You are a legal research query reformulator. "
-            "Given a user query and brief internal PDF contract context, formulate ONE concise, search-engine-optimized query "
-            "to find relevant legal precedents, statutes, or appellate court rulings on the web. "
+            "You are a specialized legal research query reformulator focused on Nigerian Law and Jurisprudence. "
+            "Given a user query and brief internal context, formulate ONE concise, search-engine-optimized query "
+            "to find authoritative Nigerian legal precedents, Supreme Court/Court of Appeal judgments (NWLR), statutes (e.g. CAMA 2020, Evidence Act 2011/2023, ACJA 2015, Land Use Act, Nigerian Constitution 1999 as amended), or regulatory directives. "
+            "Ensure the query includes relevant Nigerian legal keywords (e.g. 'Nigeria', 'NWLR', 'Supreme Court of Nigeria', 'Court of Appeal', 'LFN') unless another foreign jurisdiction is explicitly demanded. "
             "Return ONLY the plain text search query."
         )
 
@@ -123,12 +124,13 @@ class AgentRouterService:
         formatted_internal = "\n".join([f"- {c.get('text', '')[:300]}" for c in internal_chunks[:4]])
         formatted_external = "\n".join([f"- {w.get('highlights', '')[:300]}" for w in web_snippets[:4]])
 
-        system_prompt = """You are a legal conflict detector.
+        system_prompt = """You are a legal conflict detector specializing in Nigerian and commercial law.
 Compare the uploaded contract clauses [INTERNAL] against recent legal rulings or statutes from the web [EXTERNAL].
-If there is a clear contradiction or legal risk (e.g. invalid contract clause, superseded regulation), return a JSON object with:
+If there is a clear contradiction or legal risk under Nigerian Law or standard commercial jurisprudence (e.g. invalid contract clause under CAMA or Land Use Act, illegal penalty clause, unconstitutional provision), return a JSON object with:
 {
   "has_conflict": true,
   "severity": "HIGH" | "MEDIUM" | "LOW",
+  "confidence_score": 0.0 to 1.0 (your confidence that this is a genuine legal conflict, not a false alarm),
   "contract_clause": "Summary of conflicting clause from document",
   "legal_precedent": "Summary of external legal ruling or statute",
   "explanation": "Brief explanation of the conflict"
@@ -136,8 +138,13 @@ If there is a clear contradiction or legal risk (e.g. invalid contract clause, s
 
 If NO conflict or contradiction exists, return ONLY:
 {
-  "has_conflict": false
+  "has_conflict": false,
+  "confidence_score": 0.0
 }
+
+IMPORTANT: Set confidence_score high (>0.85) only when you are certain of the conflict.
+Set it moderate (0.5-0.85) when you see a potential issue that needs review.
+Set it low (<0.5) when there is only a vague or tenuous connection.
 """
 
         user_content = f"INTERNAL CLAUSES:\n{formatted_internal}\n\nEXTERNAL RULINGS:\n{formatted_external}"
@@ -160,6 +167,15 @@ If NO conflict or contradiction exists, return ONLY:
 
             parsed = json.loads(raw_text)
             if parsed.get("has_conflict"):
+                # Suppress low-confidence false alarms (<0.75) so lawyers
+                # are only alerted on genuine contradictions.
+                confidence = float(parsed.get("confidence_score", 0.0))
+                if confidence < 0.75:
+                    logger.info(
+                        f"Conflict suppressed: confidence {confidence:.2f} below 0.75 threshold. "
+                        f"Severity: {parsed.get('severity')}"
+                    )
+                    return None
                 return parsed
             return None
         except Exception as e:

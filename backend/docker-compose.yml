@@ -7,7 +7,9 @@ services:
     ports:
       - "8000:8000"
     environment:
+      DEFAULT_LLM_MODEL: ${DEFAULT_LLM_MODEL:-gemini-3.7-flash}
       AHNLICH_HOST: ahnlich
+
       AHNLICH_PORT: 1370
       USE_AHNLICH: "true"
       AHNLICH_STORE_NAME: "legal_docs"

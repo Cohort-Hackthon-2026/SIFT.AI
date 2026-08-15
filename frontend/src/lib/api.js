@@ -17,6 +17,9 @@ async function request(path, options = {}) {
 
   if (token) {
     headers.Authorization = `Bearer ${token}`;
+    if (token.startsWith("guest_")) {
+      headers["X-Guest-ID"] = token;
+    }
   }
 
   if (options.body instanceof FormData) {
@@ -54,6 +57,23 @@ async function request(path, options = {}) {
     const detail = formatApiError(payload, response.statusText);
     const err = new Error(detail || "Request failed");
     err.status = response.status;
+    // Attach tier-gate detail when backend returns 402 Payment Required
+    if (response.status === 402) {
+      try {
+        const body = typeof payload === "string" && payload ? JSON.parse(payload) : payload;
+        err.tierGate = body?.detail || null;
+      } catch {
+        err.tierGate = null;
+      }
+    }
+    // If the global opener is registered, call it so UI can show the upgrade modal immediately
+    try {
+      if (err.tierGate && typeof window !== 'undefined' && window.__sift_open_upgrade) {
+        window.__sift_open_upgrade(err.tierGate);
+      }
+    } catch {
+      // ignore
+    }
     throw err;
   }
 
@@ -96,63 +116,96 @@ async function stream(path, options = {}) {
     }
     const err = new Error(detail || "Request failed");
     err.status = response.status;
-    err.detail = detail;
+    if (response.status === 402) {
+      try {
+        const body = rawText ? JSON.parse(rawText) : null;
+        err.tierGate = body?.detail || null;
+      } catch {
+        err.tierGate = null;
+      }
+      try {
+        if (err.tierGate && typeof window !== 'undefined' && window.__sift_open_upgrade) {
+          window.__sift_open_upgrade(err.tierGate);
+        }
+      } catch {
+        // ignore
+      }
+    }
     throw err;
   }
 
-  return response;
-}
-
-async function readEventStream(response, onEvent) {
-  const reader = response.body?.getReader();
-  if (!reader) {
-    throw new Error("The server did not return a readable event stream.");
+  if (!response.body) {
+    throw new Error("The server returned an empty event stream.");
   }
 
-  const decoder = new TextDecoder();
+  return response.body;
+}
+
+async function readEventStream(body, handlers = {}) {
+  const reader = body.getReader();
+  const decoder = new TextDecoder("utf-8");
   let buffer = "";
+  let currentEvent = null;
+  let dataLines = [];
 
-  const dispatch = (frame) => {
-    if (!frame.trim()) return;
-
-    let event = "message";
-    const dataLines = [];
-
-    for (const line of frame.split(/\r?\n/)) {
-      if (line.startsWith("event:")) {
-        event = line.slice(6).trim();
-      } else if (line.startsWith("data:")) {
-        dataLines.push(line.slice(5).trimStart());
-      }
-    }
-
-    if (!dataLines.length) return;
+  const dispatch = () => {
+    if (!currentEvent || dataLines.length === 0) return;
 
     const rawData = dataLines.join("\n");
     let data = rawData;
     try {
       data = JSON.parse(rawData);
     } catch {
-      // SSE data is allowed to be plain text.
+      // ignore
     }
-    onEvent({ event, data });
+
+    if (handlers.onEvent) {
+      handlers.onEvent(currentEvent, data);
+    }
+
+    if (currentEvent === "status" && handlers.onStatus) {
+      handlers.onStatus(data);
+    } else if (currentEvent === "metadata" && handlers.onMetadata) {
+      handlers.onMetadata(data);
+    } else if (currentEvent === "message" && handlers.onMessage) {
+      handlers.onMessage(data?.delta ?? data);
+    } else if (currentEvent === "mode_change" && handlers.onModeChange) {
+      handlers.onModeChange(data);
+    } else if (currentEvent === "error" && handlers.onError) {
+      handlers.onError(data);
+    }
+  };
+
+  const processLine = (line) => {
+    const normalized = line.endsWith("\r") ? line.slice(0, -1) : line;
+
+    if (normalized === "") {
+      dispatch();
+      currentEvent = null;
+      dataLines = [];
+    } else if (normalized.startsWith("event:")) {
+      currentEvent = normalized.slice(6).trim();
+    } else if (normalized.startsWith("data:")) {
+      dataLines.push(normalized.slice(5).trimStart());
+    }
   };
 
   while (true) {
     const { done, value } = await reader.read();
     buffer += decoder.decode(value || new Uint8Array(), { stream: !done });
 
-    const frames = buffer.split(/\r?\n\r?\n/);
-    buffer = frames.pop() || "";
-    frames.forEach(dispatch);
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    lines.forEach(processLine);
 
     if (done) break;
   }
 
-  dispatch(buffer);
+  if (buffer) processLine(buffer);
+  dispatch();
 }
 
-const encodeId = (value) => encodeURIComponent(value);
+const encodeId = (id) => encodeURIComponent(String(id || ""));
 
 export const api = {
   health: () => request("/health"),
@@ -197,4 +250,44 @@ export const api = {
     stream("/api/v1/chat/stream", { method: "POST", body: payload }),
 
   readEventStream,
+
+  // --- Export endpoints
+  exportChat: (chatId, format = "PDF") =>
+    request(`/api/v1/chats/${encodeId(chatId)}/export`, {
+      method: "POST",
+      body: { format: format.toUpperCase() },
+      responseType: "blob",
+    }),
+
+  // --- Profile endpoints
+  getMyProfile: () => request(`/api/v1/me/profile`),
+  updateMyProfile: (patch) => request(`/api/v1/me/profile`, { method: "PUT", body: patch }),
+
+  // --- Billing endpoints
+  getBillingPlan: () => request(`/api/v1/billing/plan`),
+  startCheckout: (body) => request(`/api/v1/billing/checkout`, { method: "POST", body }),
+  verifyPayment: (reference, tier = null) =>
+    request(`/api/v1/billing/verify/${encodeURIComponent(reference)}`, {
+      method: "GET",
+    }),
+
+
+  // --- Chambers / Teams
+  createChambers: (name) => request(`/api/v1/chambers`, { method: "POST", body: { name } }),
+  listChambers: () => request(`/api/v1/chambers`),
+  joinChambers: (invite_code) => request(`/api/v1/chambers/join`, { method: "POST", body: { invite_code } }),
+  getChambersDetail: (id) => request(`/api/v1/chambers/${encodeId(id)}`),
+  listChambersMembers: (id) => request(`/api/v1/chambers/${encodeId(id)}/members`),
+  updateChambersMemberRole: (id, userId, role) => request(`/api/v1/chambers/${encodeId(id)}/members/${encodeId(userId)}`, { method: "PATCH", body: { role } }),
+  removeChambersMember: (id, userId) => request(`/api/v1/chambers/${encodeId(id)}/members/${encodeId(userId)}`, { method: "DELETE" }),
+
+  // --- Matters / Cases
+  listMatters: () => request(`/api/v1/matters`),
+  createMatter: (body) => request(`/api/v1/matters`, { method: "POST", body }),
+  getMatter: (id) => request(`/api/v1/matters/${encodeId(id)}`),
+  deleteMatter: (id) => request(`/api/v1/matters/${encodeId(id)}`, { method: "DELETE" }),
+
+  // --- Privacy & NDPA
+  getPolicyStatement: () => request(`/api/v1/privacy/policy-statement`),
+  deleteMyData: () => request(`/api/v1/privacy/delete-my-data`, { method: "POST" }),
 };

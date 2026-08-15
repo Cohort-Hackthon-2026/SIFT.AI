@@ -14,7 +14,14 @@ function getErrorMessage(rawText, status) {
   }
 }
 
-export async function streamChatQuery({ payload, onStatus, onMetadata, onToken }) {
+export async function streamChatQuery({
+  payload,
+  onStatus,
+  onMetadata,
+  onToken,
+  onModeChange,
+  onError,
+}) {
   const token = await getAuthToken();
   const response = await fetch(`${API_BASE_URL}/api/v1/chat/stream`, {
     method: "POST",
@@ -22,6 +29,7 @@ export async function streamChatQuery({ payload, onStatus, onMetadata, onToken }
       Accept: "text/event-stream",
       "Content-Type": "application/json",
       ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(token && token.startsWith("guest_") ? { "X-Guest-ID": token } : {}),
     },
     body: JSON.stringify(payload),
   });
@@ -57,6 +65,8 @@ export async function streamChatQuery({ payload, onStatus, onMetadata, onToken }
     if (currentEvent === "status") onStatus?.(data);
     if (currentEvent === "metadata") onMetadata?.(data);
     if (currentEvent === "message") onToken?.(data.delta || "");
+    if (currentEvent === "mode_change") onModeChange?.(data);
+    if (currentEvent === "error") onError?.(data);
   };
 
   const processLine = (line) => {

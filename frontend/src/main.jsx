@@ -4,6 +4,7 @@ import './index.css'
 import App from './App.jsx'
 import { ClerkProvider } from "@clerk/react";
 import { applyThemeColors } from "../utils/Colors";
+import { useUI } from "../store/ui";
 
 const PUBLISHABLE_KEY = import.meta.env.VITE_CLERK_PUBLISHABLE_KEY;
 
@@ -30,3 +31,17 @@ createRoot(document.getElementById('root')).render(
     </ClerkProvider>
   </StrictMode>,
 )
+
+// expose a global hook the API client can call when a 402 upgrade envelope is returned
+try {
+  // eslint-disable-next-line no-undef
+  window.__sift_open_upgrade = (detail) => {
+    try {
+      useUI.getState().openUpgradeModal(detail);
+    } catch (e) {
+      // noop
+    }
+  };
+} catch (e) {
+  // noop in non-browser environments
+}

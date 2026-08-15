@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # LLM
     GEMINI_API_KEY: str | None = None
-    DEFAULT_LLM_MODEL: str = "gemini-3.5-flash"
+    DEFAULT_LLM_MODEL: str = "gemini-3.7-flash"
 
     # Web search
     EXA_API_KEY: str | None = None
@@ -62,6 +62,14 @@ class Settings(BaseSettings):
     CLERK_ISSUER: str | None = None
     CLERK_AUTHORIZED_PARTIES: str = ""
 
+    # Billing (Paystack) — optional; checkout degrades to a mock when unset.
+    PAYSTACK_SECRET_KEY: str | None = None
+    PAYSTACK_PUBLIC_KEY: str | None = None
+    PAYSTACK_CALLBACK_URL: str | None = None
+
+    # Data residency (P4) — default region reported by the privacy endpoint.
+    DEFAULT_DATA_REGION: str = "NG"
+
     def critical_warnings(self) -> list[str]:
         """Return human-readable warnings for missing keys that silently
         degrade core features. Never raises - this is advisory, matching the
@@ -93,13 +101,14 @@ class Settings(BaseSettings):
     def log_startup_report(self) -> None:
         auth_state = "enabled (Clerk)" if self.AUTH_ENABLED else "DISABLED (local-dev-user)"
         logger.info(
-            "SIFT.AI config: model=%s auth=%s vector=%s cache=%s storage=%s rate_limit=%s",
+            "SIFT.AI config: model=%s auth=%s vector=%s cache=%s storage=%s rate_limit=%s billing=%s",
             self.DEFAULT_LLM_MODEL,
             auth_state,
             "ahnlich" if (self.AHNLICH_ENDPOINT or self.AHNLICH_HOST) and self.USE_AHNLICH else "in-memory",
             "redis" if self.REDIS_URL else "disabled",
             "r2" if all([self.R2_ENDPOINT_URL, self.R2_ACCESS_KEY_ID, self.R2_SECRET_ACCESS_KEY]) else "noop",
             f"{self.RATE_LIMIT_PER_MINUTE}/min" if self.RATE_LIMIT_ENABLED else "disabled",
+            "paystack" if self.PAYSTACK_SECRET_KEY else "mock",
         )
         for warning in self.critical_warnings():
             logger.warning("[config] %s", warning)

@@ -1,4 +1,4 @@
-import { FileSearch2, PanelLeftOpen } from "lucide-react";
+import { FileSearch2, PanelLeftOpen, Globe2, Building2 } from "lucide-react";
 
 import ThemeToggle from "../theme/ThemeToggle";
 import ModeDropdown from "../theme/ModeDropdown";
@@ -6,21 +6,26 @@ import Button from "../ui/Button";
 
 import { useAuth } from "@clerk/react";
 import { useAuth as useLocalAuth } from "../../../store/auth";
+import { useProfile } from "../../../store/profile";
 
 function TopBar({ sidebarOpen, onToggleSidebar }) {
   const { isLoaded, isSignedIn } = useAuth();
-  // const { user } = useUser();
-  // const { signOut } = useClerk();
-  // const [accountOpen, setAccountOpen] = useState(false);
   const openWelcome = useLocalAuth((state) => state.openWelcome);
-  // const email = user?.primaryEmailAddress?.emailAddress || user?.emailAddresses?.[0]?.emailAddress || "";
-  // const initials = email.slice(0, 2).toUpperCase();
+  const profile = useProfile((state) => state.profile);
+
+  const jurisdictionLabel = profile?.default_jurisdiction === "UK"
+    ? "🇬🇧 UK Common Law"
+    : profile?.default_jurisdiction === "US"
+    ? "🇺🇸 United States"
+    : profile?.default_jurisdiction === "GH"
+    ? "🇬🇭 Ghana"
+    : "🇳🇬 Nigeria (NWLR / Statutes)";
 
   return (
     <header className="sticky top-0 z-30 border-b border-border bg-surface/80 backdrop-blur-xl">
       <div className="mx-auto flex h-16 max-w-7xl items-center justify-between px-3 sm:px-6 lg:px-8">
         {/* Left side - Sidebar toggle at the edge */}
-        <div className="flex items-center gap-4 sm:gap-6">
+        <div className="flex items-center gap-3 sm:gap-5">
           {!sidebarOpen && (
             <button
               type="button"
@@ -40,10 +45,36 @@ function TopBar({ sidebarOpen, onToggleSidebar }) {
             </div>
 
             <div className="hidden sm:block">
-              <h1 className="text-lg font-semibold text-text">Sift AI</h1>
-              <p className="text-xs text-textMuted">AI Research Assistant</p>
+              <div className="flex items-center gap-2">
+                <h1 className="text-lg font-bold tracking-tight text-text">SIFT.AI</h1>
+                <span className="rounded-md bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold text-primary uppercase tracking-wide">
+                  Legal Precision
+                </span>
+              </div>
+              <p className="text-xs text-textMuted">AI Research & Grounding</p>
             </div>
           </div>
+        </div>
+
+        {/* Center / Jurisdiction & Chambers pill (visible on md screens up) */}
+        <div className="hidden md:flex items-center gap-2">
+          <div
+            className="flex items-center gap-1.5 rounded-full border border-border bg-background/80 px-3 py-1 text-xs font-medium text-text shadow-sm"
+            title="Active Jurisdiction Context"
+          >
+            <Globe2 size={13} className="text-primary" />
+            <span>{jurisdictionLabel}</span>
+          </div>
+
+          {profile?.role && (
+            <div
+              className="flex items-center gap-1.5 rounded-full border border-primary/20 bg-primary/5 px-2.5 py-1 text-xs font-medium text-primary shadow-sm"
+              title="Professional Role"
+            >
+              <Building2 size={13} />
+              <span>{profile.role.replace(/_/g, " ")}</span>
+            </div>
+          )}
         </div>
 
         {/* Right side - Controls */}
@@ -55,19 +86,6 @@ function TopBar({ sidebarOpen, onToggleSidebar }) {
               Sign In
             </Button>
           )}
-          {/* {isLoaded && isSignedIn && (
-            <div className="relative" ref={accountRef}>
-              <button type="button" onClick={() => setAccountOpen((value) => !value)} className="flex h-11 w-11 items-center justify-center overflow-hidden rounded-full border border-border bg-primary/10 text-sm font-semibold text-primary" aria-label="Open account menu">
-                {user?.imageUrl ? <img src={user.imageUrl} alt="" className="h-full w-full object-cover" /> : initials || <UserRound size={19} />}
-              </button>
-              {accountOpen && (
-                <div className="absolute right-0 mt-2 w-72 rounded-2xl border border-border bg-surface p-3 shadow-xl">
-                  <p className="truncate px-2 py-2 text-sm font-medium text-text">{email}</p>
-                  <button type="button" onClick={() => signOut()} className="flex w-full items-center gap-2 rounded-xl px-2 py-2 text-sm text-textMuted hover:bg-background hover:text-text"><LogOut size={16} /> Sign out</button>
-                </div>
-              )}
-            </div>
-          )} */}
 
           <ThemeToggle />
         </div>

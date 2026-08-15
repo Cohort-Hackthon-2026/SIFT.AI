@@ -98,7 +98,7 @@ def test_chat_stream_strict_contains_metadata_event(client) -> None:
 def test_chat_stream_strict_empty_context_yields_fallback(client) -> None:
     """When vector store has no matching chunks, the fallback string must appear in the stream."""
     with patch("app.api.routes.chat.LLMSynthesisService") as mock_llm_class:
-        async def _mock_stream(query, context_chunks):
+        async def _mock_stream(query, context_chunks, history=None, images=None):
             if not context_chunks:
                 yield "Information not found in the uploaded documents."
             else:
@@ -303,4 +303,50 @@ def test_chat_stream_returns_404_for_unknown_chat_id(client) -> None:
         json={"query": "Hello", "chat_id": "non-existent-uuid"},
     )
     assert response.status_code == 404
+
+
+def test_generate_chat_title_helper() -> None:
+    """_generate_chat_title strips conversational preambles and generates clean titles."""
+    from app.api.routes.chat import _generate_chat_title
+
+    assert _generate_chat_title("Can you please explain Governor's consent in Lagos State?") == "Governor's consent in Lagos State"
+    assert _generate_chat_title("What is the penalty for assault under ACJA 2015?") == "Penalty for assault under ACJA 2015"
+    assert _generate_chat_title("Summarize the attached tenancy agreement") == "Attached tenancy agreement"
+    assert _generate_chat_title("   ") == "Legal Research"
+    assert _generate_chat_title("", images=["data"]) == "Document & Image Analysis"
+
+
+def test_chat_stream_auto_updates_default_chat_title(client) -> None:
+    """When a message is sent to a chat with a default title, the title is automatically updated."""
+    # 1. Create a chat with default title
+    chat_resp = client.post("/api/v1/chats", json={"title": "New Research Chat"})
+    assert chat_resp.status_code == 201
+    chat_id = chat_resp.json()["chat_id"]
+
+    # 2. Stream a query
+    with patch("app.api.routes.chat.LLMSynthesisService") as mock_llm_class:
+        async def _mock_stream(*args, **kwargs):
+            yield "Remedies include injunction and damages."
+
+        mock_svc = MagicMock()
+        mock_svc.stream_strict_synthesis = _mock_stream
+        mock_svc.validate_strict_response = MagicMock(side_effect=lambda x: x)
+        mock_llm_class.return_value = mock_svc
+
+        response = client.post(
+            "/api/v1/chat/stream",
+            json={
+                "query": "What are the legal remedies for breach of contract in Lagos?",
+                "chat_id": chat_id,
+                "mode": "STRICT",
+            },
+        )
+        assert response.status_code == 200
+
+    # 3. Verify chat title was updated
+    get_resp = client.get(f"/api/v1/chats/{chat_id}")
+    assert get_resp.status_code == 200
+    updated_chat = get_resp.json()
+    assert updated_chat["title"] == "Legal remedies for breach of contract in Lagos"
+
 

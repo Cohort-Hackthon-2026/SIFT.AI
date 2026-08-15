@@ -107,6 +107,7 @@ async def test_detect_returns_conflict_dict_on_conflict() -> None:
     conflict_json = """{
         "has_conflict": true,
         "severity": "HIGH",
+        "confidence_score": 0.92,
         "contract_clause": "30-day notice without severance",
         "legal_precedent": "2025 Labour Amendment mandates 60-day severance",
         "explanation": "Contract clause directly contradicts 2025 Amendment"
@@ -126,6 +127,7 @@ async def test_detect_returns_conflict_dict_on_conflict() -> None:
     assert result is not None
     assert result["has_conflict"] is True
     assert result["severity"] == "HIGH"
+    assert result["confidence_score"] == 0.92
     assert "contract_clause" in result
     assert "legal_precedent" in result
     assert "explanation" in result
@@ -166,6 +168,7 @@ async def test_detect_handles_code_block_wrapped_json() -> None:
 {
     "has_conflict": true,
     "severity": "MEDIUM",
+    "confidence_score": 0.80,
     "contract_clause": "Clause A",
     "legal_precedent": "Precedent B",
     "explanation": "They conflict"
@@ -184,6 +187,57 @@ async def test_detect_handles_code_block_wrapped_json() -> None:
     )
     assert result is not None
     assert result["severity"] == "MEDIUM"
+    assert result["confidence_score"] == 0.80
+
+
+async def test_detect_suppresses_low_confidence_conflict() -> None:
+    """Conflicts with confidence_score < 0.75 are suppressed as false alarms."""
+    conflict_json = """{
+        "has_conflict": true,
+        "severity": "LOW",
+        "confidence_score": 0.45,
+        "contract_clause": "Vague similarity",
+        "legal_precedent": "Unrelated ruling",
+        "explanation": "Tenuous connection"
+    }"""
+    mock_response = MagicMock()
+    mock_response.content = conflict_json
+
+    svc = AgentRouterService(api_key="test-key")
+    svc.llm = MagicMock()
+    svc.llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    result = await svc.detect_legal_conflicts(
+        [{"text": "Some clause"}],
+        [{"highlights": "Some ruling"}],
+    )
+    # Low confidence -> suppressed
+    assert result is None
+
+
+async def test_detect_passes_borderline_confidence() -> None:
+    """Conflicts at exactly 0.75 should pass the threshold."""
+    conflict_json = """{
+        "has_conflict": true,
+        "severity": "MEDIUM",
+        "confidence_score": 0.75,
+        "contract_clause": "Clause X",
+        "legal_precedent": "Ruling Y",
+        "explanation": "On the border"
+    }"""
+    mock_response = MagicMock()
+    mock_response.content = conflict_json
+
+    svc = AgentRouterService(api_key="test-key")
+    svc.llm = MagicMock()
+    svc.llm.ainvoke = AsyncMock(return_value=mock_response)
+
+    result = await svc.detect_legal_conflicts(
+        [{"text": "Clause X text"}],
+        [{"highlights": "Ruling Y text"}],
+    )
+    assert result is not None
+    assert result["confidence_score"] == 0.75
 
 
 async def test_detect_returns_none_on_llm_exception() -> None:

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 from datetime import datetime, timezone
 from uuid import uuid4
@@ -51,6 +52,12 @@ class ChunkMetadata(BaseModel):
     document_id: str
     page_number: int
     user_id: str
+    # JSON-serialised list of {x0, y0, x1, y1} dicts from the source page.
+    # Stored as a string because Ahnlich MetadataValue only supports raw_string.
+    bounding_boxes: str = "[]"
+    # Source type: "pdf", "image", or "chat_text" — used by the FE to decide
+    # whether to render a PDF viewer link or a plain-text citation.
+    source: str = "pdf"
 
 
 class TextChunk(BaseModel):
@@ -157,6 +164,11 @@ def _chunk_pages(
         splits = splitter.split_text(page.text)
         for split in splits:
             chunk_id = str(uuid4())
+            # Serialise the page's bounding boxes into the chunk metadata so
+            # the citation SSE payload can pass them to the FE highlight viewer.
+            bb_json = json.dumps(
+                [bb.model_dump() for bb in page.bounding_boxes]
+            ) if page.bounding_boxes else "[]"
             chunks.append(
                 TextChunk(
                     chunk_id=chunk_id,
@@ -167,27 +179,63 @@ def _chunk_pages(
                         document_id=document_id,
                         page_number=page.page_number,
                         user_id=user_id,
+                        bounding_boxes=bb_json,
+                        source="pdf",
                     ),
                 )
             )
 
     return chunks
 
+# Accepted file types: PDFs and common image formats.
+ACCEPTED_PDF_TYPES = {"application/pdf", "application/octet-stream"}
+ACCEPTED_IMAGE_TYPES = {"image/png", "image/jpeg", "image/jpg", "image/webp", "image/tiff"}
+ACCEPTED_FILE_TYPES = ACCEPTED_PDF_TYPES | ACCEPTED_IMAGE_TYPES
+
+
+def _is_image_file(content_type: str | None, filename: str | None) -> bool:
+    """Check if the uploaded file is an image based on MIME type or extension."""
+    if content_type and content_type in ACCEPTED_IMAGE_TYPES:
+        return True
+    if filename:
+        ext = filename.rsplit(".", 1)[-1].lower() if "." in filename else ""
+        return ext in {"png", "jpg", "jpeg", "webp", "tiff", "tif"}
+    return False
+
+
+def _is_pdf_file(content_type: str | None, filename: str | None) -> bool:
+    """Check if the uploaded file is a PDF based on MIME type or extension."""
+    if content_type and content_type in ACCEPTED_PDF_TYPES:
+        return True
+    if filename:
+        return filename.lower().endswith(".pdf")
+    return False
+
 
 @router.post("/documents/upload", response_model=DocumentUploadResponse)
 async def upload_document(
     request: Request,
     file: UploadFile = File(...),
-    source_type: str = Form(default="pdf"),
+    source_type: str = Form(default="auto"),
     document_name: str | None = Form(default=None),
     current_user_id: str = Depends(rate_limited_user_id),
 ) -> DocumentUploadResponse:
-    payload = DocumentUploadRequest(document_name=document_name, source_type=source_type)
+    resolved_document_name = document_name or file.filename or "uploaded-document"
 
-    resolved_document_name = payload.document_name or file.filename or "uploaded-document.pdf"
+    # Determine file type from MIME type and extension.
+    is_image = _is_image_file(file.content_type, file.filename)
+    is_pdf = _is_pdf_file(file.content_type, file.filename)
 
-    if not resolved_document_name.lower().endswith(".pdf") and file.content_type not in {"application/pdf", "application/octet-stream"}:
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    if not is_image and not is_pdf:
+        raise HTTPException(
+            status_code=400,
+            detail="Unsupported file type. Accepted formats: PDF, PNG, JPEG, WebP, TIFF.",
+        )
+
+    # Auto-detect source_type if the client didn't specify.
+    resolved_source_type = source_type
+    if source_type == "auto":
+        resolved_source_type = "image" if is_image else "pdf"
 
     file_bytes = await file.read()
     if not file_bytes:
@@ -197,25 +245,55 @@ async def upload_document(
         max_mb = _max_upload_size_bytes() / (1024 * 1024)
         raise HTTPException(status_code=413, detail=f"File exceeds the {max_mb:.0f}MB upload limit")
 
-    try:
-        def _process() -> tuple[list[PageExtraction], str, list[TextChunk]]:
-            extracted_pages = _extract_pdf_pages(file_bytes)
-            new_document_id = str(uuid4())
-            extracted_chunks = _chunk_pages(
-                extracted_pages, document_id=new_document_id, user_id=current_user_id
-            )
-            return extracted_pages, new_document_id, extracted_chunks
-
-        pages, document_id, chunks = await asyncio.to_thread(_process)
-    except Exception as exc:  # pragma: no cover - defensive path
-        raise HTTPException(status_code=400, detail=f"Unable to process PDF: {exc}") from exc
-
     warnings: list[str] = []
-    if pages and not chunks:
-        warnings.append(
-            "No extractable text was found in this PDF (it may be a scanned image). "
-            "It was saved, but won't appear in search results until OCR support is added."
+    document_id = str(uuid4())
+
+    if is_image:
+        # Image upload: extract text via Gemini Vision, then chunk.
+        from app.services.image_extraction import ImageExtractionService
+
+        extractor = ImageExtractionService()
+        extracted_text = await extractor.extract_text(
+            file_bytes, content_type=file.content_type or "image/jpeg"
         )
+
+        if not extracted_text.strip():
+            warnings.append(
+                "No text could be extracted from this image. "
+                "The image was saved, but won't appear in search results."
+            )
+
+        pages = [
+            PageExtraction(
+                page_number=1,
+                text=extracted_text,
+                bounding_boxes=[],
+                paragraph_index=1,
+            )
+        ]
+        chunks = _chunk_pages(pages, document_id=document_id, user_id=current_user_id)
+        # Override the source type on chunk metadata for image-sourced chunks.
+        for chunk in chunks:
+            chunk.metadata.source = "image"
+    else:
+        # PDF upload: existing extraction pipeline.
+        try:
+            def _process() -> tuple[list[PageExtraction], list[TextChunk]]:
+                extracted_pages = _extract_pdf_pages(file_bytes)
+                extracted_chunks = _chunk_pages(
+                    extracted_pages, document_id=document_id, user_id=current_user_id
+                )
+                return extracted_pages, extracted_chunks
+
+            pages, chunks = await asyncio.to_thread(_process)
+        except Exception as exc:  # pragma: no cover - defensive path
+            raise HTTPException(status_code=400, detail=f"Unable to process PDF: {exc}") from exc
+
+        if pages and not chunks:
+            warnings.append(
+                "No extractable text was found in this PDF (it may be a scanned image). "
+                "It was saved, but won't appear in search results until OCR support is added."
+            )
 
     vector_store = request.app.state.vector_store
     await vector_store.initialize()
@@ -233,7 +311,7 @@ async def upload_document(
             "document_id": document_id,
             "user_id": current_user_id,
             "document_name": resolved_document_name,
-            "source_type": payload.source_type,
+            "source_type": resolved_source_type,
             "page_count": len(pages),
             "chunk_count": len(chunks),
             "file_size_bytes": len(file_bytes),
@@ -250,7 +328,7 @@ async def upload_document(
         document_id=document_id,
         user_id=current_user_id,
         document_name=resolved_document_name,
-        source_type=payload.source_type,
+        source_type=resolved_source_type,
         file_url=file_url,
         pages=pages,
         chunks=chunks,

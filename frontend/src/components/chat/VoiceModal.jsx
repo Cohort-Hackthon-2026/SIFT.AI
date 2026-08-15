@@ -7,7 +7,13 @@ function VoiceModal({ status, transcript, error, onStop, onClose }) {
   const isProcessing = status === "transcribing";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4" role="dialog" aria-modal="true" aria-label="Voice input">
+    <div
+      className="fixed inset-0 z-50 flex items-center justify-center bg-overlay px-4"
+      role="dialog"
+      aria-modal="true"
+      aria-label="Voice input"
+      onClick={(e) => { if (e.target === e.currentTarget && onClose) onClose(); }}
+    >
       <div className="w-full max-w-sm rounded-lg border border-border bg-surface p-6 shadow-2xl">
         <div className="flex flex-col items-center text-center">
           <div className={`flex h-16 w-16 items-center justify-center rounded-full ${error ? "bg-error/10 text-error" : "bg-primary/10 text-primary"}`}>
