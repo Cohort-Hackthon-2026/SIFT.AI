@@ -23,7 +23,7 @@ class Settings(BaseSettings):
 
     # LLM
     GEMINI_API_KEY: str | None = None
-    DEFAULT_LLM_MODEL: str = "gemini-3.5-flash"
+    DEFAULT_LLM_MODEL: str = "gemini-3.7-flash"
 
     # Web search
     EXA_API_KEY: str | None = None
