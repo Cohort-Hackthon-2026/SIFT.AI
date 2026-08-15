@@ -154,13 +154,27 @@ function BillingSection() {
 
   const tier = plan?.tier || "FREE";
   const quotas = plan?.usage?.quotas || {};
-  const periodStart = plan?.usage?.period_start
-    ? new Date(plan.usage.period_start).toLocaleDateString("en-US", {
+
+  const rawRenewalDate =
+    plan?.usage?.renewal_date ||
+    plan?.usage?.period_end ||
+    plan?.subscription?.period_end;
+
+  const renewalDate = rawRenewalDate
+    ? new Date(rawRenewalDate).toLocaleDateString("en-US", {
         month: "short",
         day: "numeric",
         year: "numeric",
       })
-    : "Current Month";
+    : (() => {
+        const now = new Date();
+        const nextMonth = new Date(now.getFullYear(), now.getMonth() + 1, now.getDate());
+        return nextMonth.toLocaleDateString("en-US", {
+          month: "short",
+          day: "numeric",
+          year: "numeric",
+        });
+      })();
 
   const tierBadgeStyles = {
     FREE: "bg-slate-500/10 text-slate-600 dark:text-slate-300 border-slate-500/30",
@@ -231,9 +245,14 @@ function BillingSection() {
 
             <p className="text-xs sm:text-sm text-textMuted flex items-center gap-1.5">
               <Calendar size={14} className="text-textMuted" />
-              <span>Billing period began {periodStart}</span>
+              <span>
+                {tier === "FREE"
+                  ? `Monthly quotas reset on ${renewalDate}`
+                  : `Next renewal date: ${renewalDate} · Monthly billing`}
+              </span>
             </p>
           </div>
+
 
           <button
             type="button"

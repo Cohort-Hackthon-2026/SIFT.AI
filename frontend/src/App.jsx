@@ -37,11 +37,9 @@ function App() {
     roleSelectionModalOpen,
     openChamberSelectionModal,
     chamberSelectionModalOpen,
-    openBillingModal,
   } = useUI();
   const roleSelectionPromptedRef = useRef(false);
   const chamberSelectionPromptedRef = useRef(false);
-  const billingPromptedRef = useRef(false);
 
   useLayoutEffect(() => {
     applyThemeColors(theme);
@@ -119,47 +117,6 @@ function App() {
     openChamberSelectionModal,
   ]);
 
-  // Show billing modal once during initial onboarding after role and chambers are set
-  useEffect(() => {
-    if (!isLoaded || !isSignedIn) {
-      billingPromptedRef.current = false;
-      return;
-    }
-
-    if (
-      !profile ||
-      profileLoading ||
-      roleSelectionModalOpen ||
-      chamberSelectionModalOpen
-    ) {
-      return;
-    }
-
-    // Do NOT auto-open billing if user is on the billing callback or settings page
-    if (
-      typeof window !== "undefined" &&
-      (window.location.pathname.startsWith("/billing") ||
-        window.location.pathname.startsWith("/settings"))
-    ) {
-      billingPromptedRef.current = true;
-      return;
-    }
-
-    const hasRole = profile.role && profile.role.trim() !== "";
-    const hasChambers = Boolean(profile.chambers_id);
-    if (hasRole && hasChambers && !billingPromptedRef.current) {
-      billingPromptedRef.current = true;
-      openBillingModal();
-    }
-  }, [
-    isLoaded,
-    isSignedIn,
-    roleSelectionModalOpen,
-    chamberSelectionModalOpen,
-    profile,
-    profileLoading,
-    openBillingModal,
-  ]);
 
 
   useEffect(() => {
